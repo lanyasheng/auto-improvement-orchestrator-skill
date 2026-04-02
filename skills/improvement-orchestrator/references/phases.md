@@ -11,10 +11,10 @@
 把 `generic-skill` lane 从“能讲设计”推进到“能真实跑 proposer → critic → executor → gate”。
 
 ### 当前已完成
-- [x] `propose_candidate.py`：可读目标路径 + 简单 feedback 来源，输出 candidate artifact
-- [x] `run_critic.py`：可对 candidate 打分、排序、给 recommendation
-- [x] `run_executor.py`：可执行低风险 Markdown 文案追加，产出 diff + backup
-- [x] `apply_gate.py`：可输出 `keep / pending_promote / revert / reject`
+- [x] `propose.py`：可读目标路径 + 简单 feedback 来源，输出 candidate artifact
+- [x] `score.py`：可对 candidate 打分、排序、给 recommendation
+- [x] `execute.py`：可执行低风险 Markdown 文案追加，产出 diff + backup
+- [x] `gate.py`：可输出 `keep / pending_promote / revert / reject`
 - [x] 持久化状态目录：`candidate_versions / rankings / executions / receipts / state`
 - [x] 状态文件：`current_state.json / pending_promote.json / veto.json / last_run.json`
 - [x] 输出字段对齐 control-plane-friendly 结构：`stage / status / next_step / next_owner / truth_anchor`

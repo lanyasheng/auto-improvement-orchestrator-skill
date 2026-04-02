@@ -16,7 +16,7 @@
 
 ```bash
 # 运行评估
-python scripts/evaluate.py --skill-path tests/fixtures/level3-skill --output reports/
+python scripts/score.py --skill-path tests/fixtures/level3-skill --output reports/
 
 # 运行测试
 pytest tests/fixtures/level3-skill/tests/ -v

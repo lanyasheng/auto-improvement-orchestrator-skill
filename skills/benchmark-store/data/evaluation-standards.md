@@ -278,7 +278,7 @@ mkdir -p reports/
 
 ```bash
 # 基础评估
-python scripts/evaluate.py \
+python scripts/score.py \
   --skill-path $SKILL_PATH \
   --output reports/ \
   --verbose
