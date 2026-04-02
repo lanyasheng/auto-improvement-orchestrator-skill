@@ -1,0 +1,36 @@
+# Skill Evaluator 依赖
+# 用于评估和提升其他 Skill 的能力
+
+# LLM 评估框架
+promptfoo>=0.100.0
+
+# YAML 配置解析
+pyyaml>=6.0
+
+# 测试框架
+pytest>=8.0.0
+pytest-cov>=4.0.0
+
+# 报告生成
+jinja2>=3.1.0
+markdown>=3.5.0
+
+# HTTP 请求（用于 API 测试）
+requests>=2.31.0
+
+# 异步支持
+aiohttp>=3.9.0
+
+# 日志
+loguru>=0.7.0
+
+# 数据处理
+pandas>=2.0.0
+
+# 安全测试
+bandit>=1.7.0
+
+# 代码质量
+black>=24.0.0
+flake8>=7.0.0
+mypy>=1.8.0

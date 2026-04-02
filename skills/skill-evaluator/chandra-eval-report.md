@@ -1,0 +1,9 @@
+2026-03-27 13:06:49 | INFO     | 开始评估 Skill: ../chandra-ocr
+2026-03-27 13:06:49 | INFO     | 检查 Skill 目录结构...
+2026-03-27 13:06:49 | INFO     | 结构检查结果：{'has_skill_md': True, 'has_scripts': True, 'has_evals': True, 'has_tests': True, 'has_readme': True}
+2026-03-27 13:06:49 | INFO     | 解析 SKILL.md...
+2026-03-27 13:06:49 | INFO     | Skill 信息：{'name': 'chandra-ocr', 'version': '1.0.0', 'description': '强大的 OCR 技能，处理复杂表格、表单、手写内容和数学公式，支持 40+ 语言', 'author': 'datalab-to (集成：OpenClaw Team)', 'license': 'MIT', 'tags': ['ocr', 'document', 'pdf', 'table', 'form', 'handwriting', 'math', 'layout'], 'homepage': 'https://github.com/datalab-to/chandra', 'repository': 'https://github.com/datalab-to/chandra'}
+2026-03-27 13:06:49 | WARNING  | 未找到评估配置：../chandra-ocr/evals/skill-eval-config.yaml
+2026-03-27 13:06:49 | INFO     | 生成评估报告...
+2026-03-27 13:06:49 | INFO     | 评估报告已保存到：reports/chandra-ocr-eval-20260327-130649.md
+2026-03-27 13:06:49 | INFO     | 评估完成！报告：reports/chandra-ocr-eval-20260327-130649.md

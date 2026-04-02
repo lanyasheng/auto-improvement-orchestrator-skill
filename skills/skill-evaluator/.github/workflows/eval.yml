@@ -1,0 +1,99 @@
+name: Skill Evaluation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          npm install -g promptfoo
+      
+      - name: Run Skill Self-Evaluation
+        run: |
+          python scripts/evaluate.py --skill-path ./ --output reports/ --verbose
+      
+      - name: Run Promptfoo Eval
+        run: |
+          promptfoo eval -c evals/skill-eval-config.yaml --output-path reports/promptfoo-results.json
+      
+      - name: Run Tests
+        run: |
+          pip install pytest pytest-cov
+          pytest tests/ -v --cov=. --cov-report=term-missing
+      
+      - name: Upload Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-eval-report
+          path: reports/
+      
+      - name: Check Skill Level
+        run: |
+          echo "Checking skill level..."
+          if [ -f "reports/skill-evaluator-eval-*.md" ]; then
+            if grep -q "Level 3" reports/skill-evaluator-eval-*.md; then
+              echo "✅ Skill achieved Level 3 (Production Ready)"
+            elif grep -q "Level 2" reports/skill-evaluator-eval-*.md; then
+              echo "✅ Skill achieved Level 2 (Stable & Reliable)"
+            else
+              echo "⚠️ Skill is Level 1 (Basic) - consider improving before release"
+            fi
+          fi
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Security Scan
+        run: |
+          echo "Scanning for sensitive information..."
+          ! grep -RniE '/Users/|\\.openclaw|study' . || echo "⚠️ Found potential local paths"
+          ! grep -RniE '(api[_-]?key|token|secret|password|BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9]|xox[baprs]-)' . || echo "⚠️ Found potential secrets"
+          ! grep -RniE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' . || echo "⚠️ Found potential emails"
+          echo "✅ Security scan completed"
+      
+      - name: Bandit Security Scan
+        run: |
+          pip install bandit
+          bandit -r scripts/ -f json -o reports/bandit-results.json || true
+
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install linters
+        run: |
+          pip install black flake8 mypy
+      
+      - name: Run Black
+        run: |
+          black --check scripts/
+      
+      - name: Run Flake8
+        run: |
+          flake8 scripts/ --max-line-length=120
+      
+      - name: Run MyPy
+        run: |
+          mypy scripts/ --ignore-missing-imports || true
