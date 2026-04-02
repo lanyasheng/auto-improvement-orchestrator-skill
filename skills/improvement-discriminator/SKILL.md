@@ -15,6 +15,11 @@ Multi-signal scoring engine combining heuristic rules, evaluator rubrics, frozen
 - Score and validate improvement candidates before execution
 - Run the full Critic Engine V2 evaluation pipeline
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## CLI
 ```bash
 python3 scripts/score.py --candidate candidate.json --out scored.json
