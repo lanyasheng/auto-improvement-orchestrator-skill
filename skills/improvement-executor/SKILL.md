@@ -15,6 +15,11 @@ Applies accepted candidates (docs/reference/guardrail) with automatic backup and
 - Apply an approved improvement candidate to its target file
 - Rollback a previously applied change using backup or receipt
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## CLI
 ```bash
 python3 scripts/execute.py --candidate candidate.json --out result.json
