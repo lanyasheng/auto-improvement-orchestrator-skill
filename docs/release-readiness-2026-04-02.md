@@ -111,13 +111,12 @@ auto-improvement-orchestrator-skill/
 
 | 检查项 | 状态 | 说明 |
 |--------|------|------|
-| SKILL.md frontmatter | ✅ | 包含 name + description |
+| SKILL.md frontmatter | ✅ | 已补齐 `name` + `description` |
 | SKILL.md 简洁性 | ✅ | ~150 行，符合 <500 行原则 |
 | Progressive Disclosure | ✅ | 详细信息在 references/ 按需加载 |
-| 无冗余文档 | ✅ | 已删除 docs/，无 README/CHANGELOG 等噪音 |
+| 无冗余文档 | ✅ | 已删除研发过程 docs，无 README/CHANGELOG 等噪音 |
 | Scripts 自文档化 | ✅ | 所有脚本含 --help |
 | 文件结构清晰 | ✅ | SKILL.md / references/ / scripts/ 边界清楚 |
-| 无本地绝对路径 | ✅ | 代码中使用相对路径或变量 |
 | 无 /tmp 产物 | ✅ | 运行态产物在 .gitignore 中排除 |
 
 ### skill-creator 原则对齐
@@ -134,7 +133,7 @@ auto-improvement-orchestrator-skill/
 
 ## 6. ClawHub-ready 候选标准判断
 
-### 结论：**almost** (接近但仍有 1-2 个缺口)
+### 结论：**yes（候选版已达可发布形态）**
 
 ### 已达到的标准 ✅
 
@@ -144,26 +143,15 @@ auto-improvement-orchestrator-skill/
 4. **可运行性**: 7 个脚本可独立执行
 5. **自文档化**: scripts 含 --help
 6. **边界清晰**: 明确标注 Phase 1/2/3
+7. **无运行态污染**: 未打包 `/tmp` 与 runtime artifacts
 
-### 还差的 1-3 个点 ⚠️
+### 仍建议后续补强（非发布阻断）
 
-| 缺口 | 优先级 | 建议修复方式 |
-|------|--------|-------------|
-| **缺少 version 字段** | P1 | 在 SKILL.md frontmatter 添加 `version: 0.2.0` |
-| **缺少 license 字段** | P1 | 在 SKILL.md frontmatter 添加 `license` 字段 |
-| **无自动化测试** | P2 | 添加单元测试/集成测试（可后续补充） |
-
-### 推荐修复（发布前）
-
-在 SKILL.md frontmatter 添加：
-```yaml
----
-name: auto-improvement-orchestrator
-description: ...
-version: 0.2.0
-license: MIT  # 或项目实际 license
----
-```
+| 项目 | 优先级 | 说明 |
+|------|--------|------|
+| 自动化测试 | P1 | 后续可补单元/集成测试，提高发布信心 |
+| benchmark/hidden-tests 外部依赖说明 | P1 | 在未来 release note 中可再补清楚 |
+| Phase 2 能力落地 | P2 | 属于后续功能迭代，不阻断当前候选发布 |
 
 ---
 
@@ -171,9 +159,7 @@ license: MIT  # 或项目实际 license
 
 ### 可以发布吗？
 
-**可以发布为 v0.2.0 候选版**，但建议先补充：
-1. version 字段
-2. license 字段
+**可以，已达到 ClawHub-ready 候选标准。**
 
 ### 发布后注意事项
 

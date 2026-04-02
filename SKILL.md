@@ -1,3 +1,8 @@
+---
+name: auto-improvement-orchestrator
+description: Unified entry skill for structured self-improvement workflows across skills, macro, and workflows using a Proposer → Critic → Executor → Gate loop. Use when optimizing a skill or workflow, generating improvement candidates, running critic/evaluator review, applying low-risk iterative improvements, or managing rollback/gate decisions for auto-improvement tasks.
+---
+
 # Auto-Improvement Orchestrator
 
 **统一入口 skill**:协调 Proposer / Critic / Executor / Gate 四角色,对 skill / macro / workflow 等对象进行自动化改进。
