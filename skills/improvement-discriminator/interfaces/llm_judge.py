@@ -44,6 +44,7 @@ class JudgeConfig:
     model: str = "claude-sonnet-4-20250514"
     temperature: float = 0.0  # Deterministic for reproducibility
     max_tokens: int = 1024
+    base_url: str | None = None  # Custom API base URL (e.g. DashScope proxy)
     dimensions: list[str] = field(default_factory=lambda: [
         "clarity", "specificity", "consistency", "safety"
     ])
@@ -123,10 +124,14 @@ class LLMJudge:
         )
 
     def _call_claude(self, prompt: str) -> str:
-        """Call Claude API."""
+        """Call Claude API. Supports custom base_url (e.g. DashScope proxy) via config or env."""
         try:
             import anthropic
-            client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY env var
+            kwargs = {}
+            base_url = self.config.base_url or os.environ.get("ANTHROPIC_BASE_URL")
+            if base_url:
+                kwargs["base_url"] = base_url
+            client = anthropic.Anthropic(**kwargs)  # Uses ANTHROPIC_API_KEY env var
             response = client.messages.create(
                 model=self.config.model,
                 max_tokens=self.config.max_tokens,
