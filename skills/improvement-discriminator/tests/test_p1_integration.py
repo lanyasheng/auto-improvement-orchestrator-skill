@@ -91,16 +91,18 @@ def test_critic_engine_v2():
     print("Test 2: Critic Engine V2")
     print("=" * 60)
 
-    from critic_engine_v2 import CriticEngineV2, CriticConfig
+    from critic_engine import CriticEngineV2, CriticConfig
 
     # 创建配置
     config = CriticConfig(
         enable_frozen_benchmark=True,
         enable_hidden_tests=True,
         enable_assertions=True,
-        benchmark_weight=0.4,
-        hidden_test_weight=0.3,
-        assertion_weight=0.3,
+        benchmark_weight=0.35,
+        hidden_test_weight=0.25,
+        assertion_weight=0.20,
+        regression_weight=0.10,
+        human_review_weight=0.10,
         verbose=False,
         use_mock_evaluator=True,  # 测试使用 mock
     )
@@ -156,7 +158,7 @@ def test_real_skill_evaluator():
     print("Test 3: Real Skill Evaluator")
     print("=" * 60)
 
-    from critic_engine_v2 import RealSkillEvaluator
+    from critic_engine import RealSkillEvaluator
     from frozen_benchmark import BenchmarkCase
 
     # 创建临时 Skill 文件
@@ -221,30 +223,16 @@ def test_scripts_interfaces_integration():
     print("Test 4: Scripts/Interfaces Integration")
     print("=" * 60)
 
-    # 测试 evaluate.py 能否使用 critic_engine_v2
+    # 测试 score.py 存在且 critic_engine 可导入
     scripts_dir = Path(__file__).parent.parent / "scripts"
     sys.path.insert(0, str(scripts_dir))
 
-    # 检查 evaluate.py 是否存在
-    evaluate_script = scripts_dir / "evaluate.py"
-    assert evaluate_script.exists(), "evaluate.py should exist"
+    score_script = scripts_dir / "score.py"
+    assert score_script.exists(), "score.py should exist"
+    print(f"✅ score.py exists")
 
-    # 检查是否包含 use-critic 参数
-    evaluate_content = evaluate_script.read_text()
-    assert "--use-critic" in evaluate_content, "evaluate.py should support --use-critic"
-
-    print(f"✅ evaluate.py exists and supports --use-critic")
-
-    # 测试能否导入 critic_engine_v2
-    try:
-        from critic_engine_v2 import CriticEngineV2, CriticConfig
-        print(f"✅ critic_engine_v2 can be imported from scripts context")
-    except ImportError as e:
-        print(f"⚠️ critic_engine_v2 import failed: {e}")
-        # 尝试从 interfaces 导入
-        sys.path.insert(0, str(interfaces_dir))
-        from critic_engine_v2 import CriticEngineV2, CriticConfig
-        print(f"✅ critic_engine_v2 imported from interfaces/")
+    from critic_engine import CriticEngineV2, CriticConfig
+    print(f"✅ critic_engine can be imported")
 
     # 测试能否运行简单评估
     config = CriticConfig(
@@ -253,7 +241,9 @@ def test_scripts_interfaces_integration():
         enable_assertions=True,
         benchmark_weight=0.0,
         hidden_test_weight=0.0,
-        assertion_weight=1.0,
+        assertion_weight=0.80,
+        regression_weight=0.10,
+        human_review_weight=0.10,
         verbose=False,
     )
 
@@ -279,7 +269,7 @@ def test_mock_reduction():
     print("Test 5: Mock Reduction Verification")
     print("=" * 60)
 
-    from critic_engine_v2 import CriticConfig, CriticEngineV2
+    from critic_engine import CriticConfig, CriticEngineV2
 
     # 验证默认配置不使用 mock
     default_config = CriticConfig()
@@ -294,8 +284,11 @@ def test_mock_reduction():
     print(f"✅ Can explicitly enable mock when needed")
 
     # 验证权重配置
-    assert abs(default_config.benchmark_weight + default_config.hidden_test_weight + default_config.assertion_weight - 1.0) < 0.001
-    print(f"✅ Weights sum to 1.0: {default_config.benchmark_weight} + {default_config.hidden_test_weight} + {default_config.assertion_weight}")
+    total = (default_config.benchmark_weight + default_config.hidden_test_weight
+             + default_config.assertion_weight + default_config.regression_weight
+             + default_config.human_review_weight)
+    assert abs(total - 1.0) < 0.001
+    print(f"✅ Weights sum to 1.0: {total}")
 
     print("\n✅ Mock Reduction verification passed!")
     return True

@@ -1,4 +1,2 @@
 [tool.pytest.ini_options]
-# Test discovery across skill subdirectories.
-# Each skill has its own tests/ directory without __init__.py to avoid
-# namespace collisions.
+pythonpath = ["."]

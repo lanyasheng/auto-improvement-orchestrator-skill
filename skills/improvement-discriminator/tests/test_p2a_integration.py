@@ -323,7 +323,7 @@ def test_critic_v2_p2a_integration():
     print("Test 4: Critic V2 P2-a Integration")
     print("=" * 60)
 
-    from critic_engine_v2 import CriticEngineV2, CriticConfig
+    from critic_engine import CriticEngineV2, CriticConfig
     from human_review import ReviewDecision
 
     # 创建配置 (包含 P2-a 权重)
