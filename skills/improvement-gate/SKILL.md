@@ -10,3 +10,12 @@ tags: [gate, quality, decision, keep, revert, reject]
 # Improvement Gate
 
 Conservative gate: only auto-keeps low-risk docs/reference/guardrail edits; everything else goes to pending or reject.
+
+## When to Use
+- Decide whether to keep, pend, revert, or reject an executed candidate
+- Run mechanical validation (5-layer) before the decision
+
+## CLI
+```bash
+python3 scripts/gate.py --execution result.json --out receipt.json
+```

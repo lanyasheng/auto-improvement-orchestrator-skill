@@ -10,3 +10,12 @@ tags: [generator, proposer, candidates, self-improvement]
 # Improvement Generator
 
 Produces ranked improvement candidates from target analysis and feedback signals.
+
+## When to Use
+- Generate structured improvement proposals for a skill
+- Analyze feedback, memory, and source material to produce candidates
+
+## CLI
+```bash
+python3 scripts/propose.py --target /path/to/skill --out candidates.json
+```

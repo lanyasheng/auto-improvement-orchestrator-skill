@@ -119,7 +119,6 @@ def test_hidden_tests_data_source():
     print(f"✅ Evaluator sees {len(evaluator_tests)} tests, proposer sees {len(proposer_tests)} tests")
 
     print("\n✅ Hidden Tests Data Source tests passed!")
-    return True
 
 
 def test_external_regression_hook():
@@ -207,7 +206,6 @@ def test_external_regression_hook():
         Path(report_path).unlink()
 
     print("\n✅ External Regression Hook tests passed!")
-    return True
 
 
 def test_human_review_receipt():
@@ -314,7 +312,6 @@ def test_human_review_receipt():
         Path(report_path).unlink()
 
     print("\n✅ Human Review Receipt tests passed!")
-    return True
 
 
 def test_critic_v2_p2a_integration():
@@ -412,7 +409,6 @@ def test_critic_v2_p2a_integration():
     print(f"✅ Report generated successfully")
 
     print("\n✅ Critic V2 P2-a Integration tests passed!")
-    return True
 
 
 def run_all_tests():
