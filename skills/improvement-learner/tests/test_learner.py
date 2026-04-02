@@ -21,12 +21,16 @@ import pytest
 # ---------------------------------------------------------------------------
 # Path setup — mirror production import paths
 # ---------------------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-BENCHMARK_SCRIPTS = REPO_ROOT / "skills" / "benchmark-store" / "scripts"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(SCRIPTS_DIR))
-sys.path.insert(0, str(BENCHMARK_SCRIPTS))
+BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
+REPO_ROOT = _REPO_ROOT
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+if str(BENCHMARK_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_SCRIPTS))
 
 from self_improve import (  # noqa: E402
     ImprovementResult,
@@ -38,6 +42,7 @@ from self_improve import (  # noqa: E402
     generate_improvement_report,
     backup_skill,
     revert_to_backup,
+    _propose_instruction_improvement,
 )
 from pareto import ParetoFront, ParetoEntry  # noqa: E402
 
@@ -466,3 +471,84 @@ class TestGenerateImprovementReport:
         assert report["skipped"] == 0
         assert report["final_scores"] == {"x": 0.7}
         assert len(report["results"]) == 2
+
+
+# ===========================================================================
+# Instruction-level improvements (P1)
+# ===========================================================================
+
+class TestProposeInstructionImprovement:
+    """Test _propose_instruction_improvement for SKILL.md content analysis."""
+
+    def test_propose_instruction_missing_when_to_use(self, tmp_path):
+        """Skill without '## When to Use' section triggers instruction improvement."""
+        skill = tmp_path / "skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(
+            "---\nname: test\n---\n\n# Test Skill\n\nSome content.\n",
+            encoding="utf-8",
+        )
+        result = _propose_instruction_improvement(skill, {"accuracy": 0.6})
+        assert result is not None
+        assert result["type"] == "instruction"
+        assert result["issue_id"] == "missing_when_to_use"
+
+    def test_propose_instruction_too_long(self, tmp_path):
+        """Skill with >300 line SKILL.md triggers too_long issue."""
+        skill = tmp_path / "skill"
+        skill.mkdir()
+        # Build a SKILL.md with all expected sections but >300 lines
+        lines = ["---", "name: test", "---", "", "# Test Skill", ""]
+        lines.append("## When to Use")
+        lines.append("")
+        lines.append("- Use it here")
+        lines.append("")
+        lines.append("## When NOT to Use")
+        lines.append("")
+        lines.append("- Don't use it there")
+        lines.append("")
+        lines.append("```bash")
+        lines.append("example command")
+        lines.append("```")
+        # Pad to >300 lines
+        for i in range(300):
+            lines.append(f"Line {i}: filler content for length testing.")
+        (skill / "SKILL.md").write_text("\n".join(lines), encoding="utf-8")
+
+        result = _propose_instruction_improvement(skill, {"accuracy": 0.7})
+        assert result is not None
+        assert result["type"] == "instruction"
+        assert result["issue_id"] == "too_long"
+
+    def test_propose_instruction_no_issues(self, tmp_path):
+        """Skill with all sections present returns None (no improvements needed)."""
+        skill = tmp_path / "skill"
+        skill.mkdir()
+        content = (
+            "---\nname: test\n---\n\n"
+            "# Test Skill\n\n"
+            "## When to Use\n\n- Use it here\n\n"
+            "## When NOT to Use\n\n- Don't use it there\n\n"
+            "```bash\nexample\n```\n"
+        )
+        (skill / "SKILL.md").write_text(content, encoding="utf-8")
+        result = _propose_instruction_improvement(skill, {"accuracy": 0.8})
+        assert result is None
+
+    def test_apply_instruction_adds_when_to_use(self, tmp_path):
+        """Verify that applying missing_when_to_use adds the section to SKILL.md."""
+        skill = tmp_path / "skill"
+        skill.mkdir()
+        original = "---\nname: test\n---\n\n# Test Skill\n\nSome content.\n"
+        (skill / "SKILL.md").write_text(original, encoding="utf-8")
+
+        candidate = {
+            "type": "instruction",
+            "issue_id": "missing_when_to_use",
+            "description": "Add '## When to Use' section",
+        }
+        result = apply_improvement(skill, candidate)
+        assert result is True
+
+        updated = (skill / "SKILL.md").read_text(encoding="utf-8")
+        assert "## When to Use" in updated

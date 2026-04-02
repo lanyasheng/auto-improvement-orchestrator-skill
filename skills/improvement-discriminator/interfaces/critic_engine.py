@@ -24,10 +24,10 @@ import time
 import importlib.util
 import sys
 
-# frozen_benchmark and hidden_tests are owned by benchmark-store
-_benchmark_store_interfaces = str(Path(__file__).resolve().parents[2] / "benchmark-store" / "interfaces")
-if _benchmark_store_interfaces not in sys.path:
-    sys.path.insert(0, _benchmark_store_interfaces)
+# Import from benchmark-store (sibling skill)
+_BENCHMARK_STORE = Path(__file__).resolve().parents[2] / "benchmark-store" / "interfaces"
+if str(_BENCHMARK_STORE) not in sys.path:
+    sys.path.insert(0, str(_BENCHMARK_STORE))
 
 try:
     from .assertions import (
@@ -64,23 +64,43 @@ except ImportError:
         ReviewDecision,
     )
 
-from frozen_benchmark import (
-    BenchmarkCase,
-    BenchmarkResult,
-    BenchmarkSuite,
-    FrozenBenchmark,
-    MetricType,
-    ScoringCriteria,
-    STANDARD_BENCHMARK_SUITE,
-)
-from hidden_tests import (
-    HiddenTest,
-    HiddenTestSuite,
-    TestResult,
-    TestType,
-    TestVisibility,
-    create_hidden_test,
-)
+try:
+    from frozen_benchmark import (
+        BenchmarkCase,
+        BenchmarkResult,
+        BenchmarkSuite,
+        FrozenBenchmark,
+        MetricType,
+        ScoringCriteria,
+        STANDARD_BENCHMARK_SUITE,
+    )
+except ImportError:
+    # Fallback: benchmark-store not available
+    FrozenBenchmark = None
+    BenchmarkSuite = None
+    STANDARD_BENCHMARK_SUITE = None
+    BenchmarkCase = None
+    BenchmarkResult = None
+    MetricType = None
+    ScoringCriteria = None
+
+try:
+    from hidden_tests import (
+        HiddenTest,
+        HiddenTestSuite,
+        TestResult,
+        TestType,
+        TestVisibility,
+        create_hidden_test,
+    )
+except ImportError:
+    # Fallback: benchmark-store not available
+    HiddenTest = None
+    HiddenTestSuite = None
+    TestResult = None
+    TestType = None
+    TestVisibility = None
+    create_hidden_test = None
 
 
 @dataclass
@@ -263,7 +283,7 @@ class CriticScore:
 
 class MockSkillEvaluator:
     """
-    模拟 Skill 评估器 (P1: 降级为 fallback)
+    Deterministic mock evaluator for testing. No randomness.
 
     P1 说明:
     - 仅在 use_mock_evaluator=True 时使用
@@ -275,21 +295,21 @@ class MockSkillEvaluator:
         self.success_rate = success_rate
         self.avg_time_ms = avg_time_ms
         self.token_usage = 0
+        self._call_count = 0
 
     def evaluate(self, case: BenchmarkCase) -> BenchmarkResult:
-        """评估单个基准测试用例"""
-        import random
+        """评估单个基准测试用例 (deterministic)"""
+        self._call_count += 1
 
-        # 模拟执行时间
-        execution_time = random.gauss(self.avg_time_ms, self.avg_time_ms * 0.2)
-        execution_time = max(100, execution_time)
+        # Deterministic execution time
+        execution_time = self.avg_time_ms
 
-        # 模拟成功率
-        passed = random.random() < self.success_rate
-        score = 1.0 if passed else random.uniform(0.0, 0.5)
+        # Deterministic: succeed for first N% of calls based on success_rate
+        passed = (self._call_count % 10) < int(self.success_rate * 10)
+        score = 0.85 if passed else 0.3
 
-        # 模拟 token 使用量
-        token_usage = random.randint(500, 2000)
+        # Deterministic token usage
+        token_usage = 1000
 
         return BenchmarkResult(
             case_id=case.id,
