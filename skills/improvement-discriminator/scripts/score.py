@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
 sys.path.insert(0, str(Path(__file__).resolve().parent))      # scripts/
 
 from rubric_evidence import build_evaluator_evidence

@@ -1,9 +1,12 @@
 """Pareto front tracking for multi-dimensional skill improvement."""
 
 from __future__ import annotations
-import json
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
+
 from lib.common import read_json, write_json, utc_now_iso
 
 
