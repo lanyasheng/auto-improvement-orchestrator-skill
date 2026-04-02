@@ -14,5 +14,21 @@
     },
     "timestamp": "2026-04-02T11:48:24Z",
     "hit_count": 1
+  },
+  {
+    "type": "instruction",
+    "succeeded": true,
+    "context": {
+      "dimension": "accuracy",
+      "scores": {
+        "coverage": 1.0,
+        "accuracy": 0.8,
+        "efficiency": 1.0,
+        "reliability": 1.0,
+        "security": 0.8
+      }
+    },
+    "timestamp": "2026-04-02T12:14:28Z",
+    "hit_count": 1
   }
 ]
