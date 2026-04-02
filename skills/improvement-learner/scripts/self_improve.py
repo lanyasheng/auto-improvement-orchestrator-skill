@@ -203,32 +203,42 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             scores["coverage"] = max(0.3, scores["coverage"] - 0.2)
 
     # Accuracy: SKILL.md quality (granular 0.0-1.0 scoring)
+    # Checks inspired by alirezarezvani/claude-skills authoring standard:
+    # frontmatter, trigger description, practitioner voice, progressive
+    # disclosure, proactive triggers, output artifacts, related skills.
     if has_skill_md:
         content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        content_lower = content.lower()
         acc_checks = []
-        # Has YAML frontmatter?
+        # 1. Has YAML frontmatter?
         acc_checks.append(content.startswith("---"))
-        # Frontmatter has required fields?
+        # 2-4. Frontmatter has required fields?
         if content.startswith("---"):
             fm_section = content.split("---", 2)[1] if content.count("---") >= 2 else ""
             acc_checks.append("name:" in fm_section)
             acc_checks.append("description:" in fm_section)
-            acc_checks.append("version:" in fm_section)
+            # description should be "pushy" — contain trigger keywords (>30 chars)
+            desc_match = [l for l in fm_section.split("\n") if l.strip().startswith("description:")]
+            acc_checks.append(bool(desc_match and len(desc_match[0]) > 40))
         else:
             acc_checks.extend([False, False, False])
-        # Has "When to Use" section?
-        acc_checks.append("## When to Use" in content or "## 何时使用" in content)
-        # Has "When NOT to Use" section?
-        acc_checks.append("## When NOT to Use" in content or "## 不应该使用" in content)
-        # Has code examples?
+        # 5. Has "When to Use" section?
+        acc_checks.append("## when to use" in content_lower or "## 何时使用" in content_lower)
+        # 6. Has "When NOT to Use" section?
+        acc_checks.append("## when not to use" in content_lower or "## 不应该使用" in content_lower)
+        # 7. Has code examples?
         acc_checks.append("```" in content)
-        # Has CLI section?
-        acc_checks.append("## CLI" in content or "## Quick Start" in content or "## Usage" in content)
-        # No vague language?
-        vague = ["etc.", "and so on", "and more", "various things"]
-        acc_checks.append(not any(v in content.lower() for v in vague))
-        # Reasonable length (not too short)?
+        # 8. Has usage/CLI section?
+        acc_checks.append(any(s in content for s in ["## CLI", "## Quick Start", "## Usage", "## 使用"]))
+        # 9. No vague language (practitioner voice)?
+        vague = ["etc.", "and so on", "and more", "various things", "you might consider"]
+        acc_checks.append(not any(v in content_lower for v in vague))
+        # 10. Reasonable length (not too short)?
         acc_checks.append(len(content.split("\n")) >= 15)
+        # 11. Has related skills / references section?
+        acc_checks.append(any(s in content for s in ["## Related", "## 关联", "## References", "## 参考"]))
+        # 12. Has output artifacts or deliverables section?
+        acc_checks.append(any(s in content_lower for s in ["## output", "## 输出", "artifact", "deliverable"]))
 
         scores["accuracy"] = sum(acc_checks) / len(acc_checks)
 
