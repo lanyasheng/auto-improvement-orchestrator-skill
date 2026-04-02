@@ -27,8 +27,10 @@ from typing import Any
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
-sys.path.insert(0, str(_REPO_ROOT))
-sys.path.insert(0, str(_BENCHMARK_SCRIPTS))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if str(_BENCHMARK_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_BENCHMARK_SCRIPTS))
 
 from lib.common import read_json, write_json, utc_now_iso  # noqa: E402
 from pareto import ParetoFront, ParetoEntry  # noqa: E402
@@ -237,23 +239,82 @@ _IMPROVEMENT_STRATEGIES: dict[str, dict[str, Any]] = {
 }
 
 
+def _propose_instruction_improvement(skill_path: Path, scores: dict) -> dict | None:
+    """Propose an instruction-level improvement to SKILL.md."""
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        return None
+
+    content = skill_md.read_text()
+    issues = []
+
+    # Detect common SKILL.md quality issues
+    if "## When to Use" not in content and "## 何时使用" not in content:
+        issues.append(("missing_when_to_use", "Add '## When to Use' section with clear trigger conditions"))
+
+    if "## When NOT to Use" not in content and "## 不应该使用" not in content:
+        issues.append(("missing_when_not_to_use", "Add '## When NOT to Use' section to prevent misuse"))
+
+    lines = content.split("\n")
+    if len(lines) > 300:
+        issues.append(("too_long", f"SKILL.md is {len(lines)} lines — extract details to references/"))
+
+    if "```" not in content:
+        issues.append(("no_examples", "Add CLI usage examples with code blocks"))
+
+    # Check for vague instructions
+    vague_patterns = ["etc.", "and so on", "and more", "various", "many"]
+    for pattern in vague_patterns:
+        if pattern in content.lower():
+            issues.append(("vague_language", f"Replace vague '{pattern}' with specific items"))
+            break
+
+    if not issues:
+        return None
+
+    # Pick the highest-priority issue
+    issue = issues[0]
+    return {
+        "type": "instruction",
+        "dimension": "accuracy",
+        "description": issue[1],
+        "issue_id": issue[0],
+        "priority": 0.8,
+    }
+
+
 def propose_targeted_improvement(
     skill_path: Path,
     weakest_dim: str,
     patterns: list[dict],
+    scores: dict | None = None,
 ) -> dict[str, Any] | None:
     """Propose a targeted improvement for the weakest dimension.
 
     Returns a candidate dict or None if no improvement is possible.
     """
-    strategy = _IMPROVEMENT_STRATEGIES.get(weakest_dim)
-    if strategy is None:
-        return None
-
     # Check if previous patterns for this dim all failed → skip
     failed = [p for p in patterns if not p.get("succeeded", True)]
     if len(failed) >= 3:
         return None  # Too many failures on this dimension; skip
+
+    # When accuracy is the weakest and below 0.9, try instruction improvement first
+    if scores is not None and weakest_dim == "accuracy" and scores.get("accuracy", 1.0) < 0.9:
+        candidate = _propose_instruction_improvement(skill_path, scores)
+        if candidate is not None:
+            return candidate
+
+    # When accuracy is the weakest among otherwise-good dimensions, prioritise instruction
+    if scores is not None and weakest_dim == "accuracy":
+        other_dims = {k: v for k, v in scores.items() if k != "accuracy"}
+        if other_dims and all(v >= 0.7 for v in other_dims.values()):
+            candidate = _propose_instruction_improvement(skill_path, scores)
+            if candidate is not None:
+                return candidate
+
+    strategy = _IMPROVEMENT_STRATEGIES.get(weakest_dim)
+    if strategy is None:
+        return None
 
     return dict(strategy)  # shallow copy
 
@@ -276,6 +337,8 @@ def apply_improvement(skill_path: Path, candidate: dict[str, Any]) -> bool:
         return _apply_efficiency_improvement(skill_path)
     elif ctype == "security":
         return _apply_security_improvement(skill_path)
+    elif ctype == "instruction":
+        return _apply_instruction_improvement(skill_path, candidate)
     return False
 
 
@@ -372,6 +435,83 @@ def _apply_security_improvement(skill_path: Path) -> bool:
     if redacted != content:
         md.write_text(redacted, encoding="utf-8")
         return True
+    return False
+
+
+def _apply_instruction_improvement(skill_path: Path, improvement: dict) -> None | bool:
+    """Apply an instruction-level improvement to SKILL.md."""
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        return False
+    content = skill_md.read_text(encoding="utf-8")
+    issue_id = improvement.get("issue_id", "")
+
+    if issue_id == "missing_when_to_use":
+        # Add a When to Use section after the first heading
+        lines = content.split("\n")
+        insert_idx = next((i for i, l in enumerate(lines) if l.startswith("# ") and i > 0), len(lines))
+        section = "\n## When to Use\n\n- [Define specific trigger conditions here]\n- [Add use cases]\n"
+        lines.insert(insert_idx + 1, section)
+        skill_md.write_text("\n".join(lines), encoding="utf-8")
+        return True
+
+    elif issue_id == "missing_when_not_to_use":
+        # Add after When to Use or after first heading
+        lines = content.split("\n")
+        when_idx = next((i for i, l in enumerate(lines) if "When to Use" in l), None)
+        if when_idx is not None:
+            # Find end of When to Use section
+            insert_idx = when_idx + 1
+            while insert_idx < len(lines) and not lines[insert_idx].startswith("#"):
+                insert_idx += 1
+        else:
+            insert_idx = next((i for i, l in enumerate(lines) if l.startswith("# ") and i > 0), len(lines)) + 1
+        section = "\n## When NOT to Use\n\n- [Define exclusion conditions here]\n"
+        lines.insert(insert_idx, section)
+        skill_md.write_text("\n".join(lines), encoding="utf-8")
+        return True
+
+    elif issue_id == "too_long":
+        # Extract detailed sections to references/
+        references_dir = skill_path / "references"
+        references_dir.mkdir(exist_ok=True)
+        # Find the longest section and extract it
+        lines = content.split("\n")
+        sections: list[dict] = []
+        current_section: dict = {"heading": "", "start": 0, "lines": []}
+        for i, line in enumerate(lines):
+            if line.startswith("## "):
+                if current_section["lines"]:
+                    sections.append(current_section)
+                current_section = {"heading": line, "start": i, "lines": []}
+            else:
+                current_section["lines"].append(line)
+        if current_section["lines"]:
+            sections.append(current_section)
+
+        if sections:
+            longest = max(sections, key=lambda s: len(s["lines"]))
+            if len(longest["lines"]) > 30:
+                # Extract to references/
+                slug = longest["heading"].strip("# ").lower().replace(" ", "-")[:30]
+                ref_path = references_dir / f"{slug}.md"
+                ref_path.write_text(
+                    longest["heading"] + "\n" + "\n".join(longest["lines"]),
+                    encoding="utf-8",
+                )
+                # Replace in SKILL.md with a link
+                new_content = content.replace(
+                    longest["heading"] + "\n" + "\n".join(longest["lines"]),
+                    f"{longest['heading']}\n\nSee [{ref_path.name}](references/{ref_path.name}) for details.\n"
+                )
+                skill_md.write_text(new_content, encoding="utf-8")
+                return True
+
+    elif issue_id == "no_examples":
+        content += "\n\n## Quick Start\n\n```bash\n# TODO: Add usage examples\n```\n"
+        skill_md.write_text(content, encoding="utf-8")
+        return True
+
     return False
 
 
@@ -481,7 +621,7 @@ def self_improve_loop(
         patterns = memory.get_patterns(weakest_dim)
 
         # 2. Propose improvement
-        candidate = propose_targeted_improvement(skill_path, weakest_dim, patterns)
+        candidate = propose_targeted_improvement(skill_path, weakest_dim, patterns, scores=best_scores)
         if candidate is None:
             results.append(ImprovementResult(
                 i, "none", "No candidate found",
