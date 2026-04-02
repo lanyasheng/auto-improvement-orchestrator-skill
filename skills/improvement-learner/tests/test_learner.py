@@ -127,9 +127,26 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "empty-skill"
         skill.mkdir()
         scores = evaluate_skill_dimensions(skill)
-        assert scores["coverage"] == 0.0  # nothing exists
+        assert scores["coverage"] == 0.0  # no SKILL.md
         assert scores["accuracy"] == 0.0
-        assert scores["reliability"] == 0.0
+        # No scripts → pure-text → reliability = 1.0
+        assert scores["reliability"] == 1.0
+
+    def test_pure_text_skill_scores_fair(self, tmp_path):
+        """Pure-text skill (SKILL.md only, no scripts/tests) should not be penalised."""
+        skill = tmp_path / "text-skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(
+            "---\nname: text-only\nversion: 1.0\ndescription: A pure text skill\n"
+            "author: Team\nlicense: MIT\n---\n\n# Text Skill\n\n"
+            "## When to Use\n- For guidance\n\n## When NOT to Use\n- Never\n\n"
+            "## Usage\n\n```\nJust read SKILL.md\n```\n",
+            encoding="utf-8",
+        )
+        scores = evaluate_skill_dimensions(skill)
+        assert scores["coverage"] == 0.6  # SKILL.md only = base 60%
+        assert scores["reliability"] == 1.0  # pure-text → default 1.0
+        assert scores["accuracy"] >= 0.6
 
     def test_full_structure_scores_high(self, tmp_path):
         skill = tmp_path / "good-skill"
@@ -151,7 +168,7 @@ class TestEvaluateSkillDimensions:
         )
 
         scores = evaluate_skill_dimensions(skill)
-        assert scores["coverage"] == 1.0  # all 5 items present
+        assert scores["coverage"] == 1.0  # SKILL.md + all 4 bonuses = 1.0
         assert scores["accuracy"] == 1.0  # all accuracy checks pass
         assert scores["security"] >= 0.8  # no secrets
 
@@ -177,6 +194,16 @@ class TestEvaluateSkillDimensions:
         scores = evaluate_skill_dimensions(skill)
         expected_dims = {"coverage", "accuracy", "efficiency", "reliability", "security"}
         assert set(scores.keys()) == expected_dims
+
+    def test_scripts_without_tests_penalises_reliability(self, tmp_path):
+        """A skill with scripts/ but no tests/ should get low reliability."""
+        skill = tmp_path / "script-skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("---\nname: test\n---\n# Skill\n" * 5, encoding="utf-8")
+        (skill / "scripts").mkdir()
+        (skill / "scripts" / "run.py").write_text("print('hi')\n", encoding="utf-8")
+        scores = evaluate_skill_dimensions(skill)
+        assert scores["reliability"] == 0.3  # has scripts but no tests
 
 
 # ===========================================================================
@@ -242,14 +269,27 @@ class TestProposeTargetedImprovement:
 
 class TestApplyImprovement:
 
-    def test_coverage_creates_missing_dirs(self, tmp_path):
+    def test_coverage_creates_references_for_long_skill_md(self, tmp_path):
         skill = tmp_path / "skill"
         skill.mkdir()
+        # Create a >500 line SKILL.md
+        lines = ["---", "name: test", "---", ""]
+        for i in range(510):
+            lines.append(f"Line {i}: content")
+        (skill / "SKILL.md").write_text("\n".join(lines), encoding="utf-8")
         result = apply_improvement(skill, {"type": "coverage"})
         assert result is True
-        assert (skill / "tests").is_dir()
         assert (skill / "references").is_dir()
-        assert (skill / "README.md").exists()
+        # Should NOT create tests/ or README.md
+        assert not (skill / "tests").exists()
+        assert not (skill / "README.md").exists()
+
+    def test_coverage_noop_for_short_skill_md(self, tmp_path):
+        skill = tmp_path / "skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("# Short\n", encoding="utf-8")
+        result = apply_improvement(skill, {"type": "coverage"})
+        assert result is False  # nothing to do
 
     def test_accuracy_adds_frontmatter(self, tmp_path):
         skill = tmp_path / "skill"

@@ -157,6 +157,14 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 
     Returns a dict of dimension -> score (0.0–1.0).  All checks are
     deterministic and based on actual file content.
+
+    Design principle (per skill-creator spec):
+    - Only SKILL.md is required.  scripts/, references/, tests/, assets/
+      are all OPTIONAL.
+    - Pure-text skills (no scripts/) are legitimate and must not be
+      penalised for missing tests/ or README.md.
+    - references/ is expected only when SKILL.md exceeds 500 lines
+      (progressive disclosure rule).
     """
     skill_path = Path(skill_path)
     scores: dict[str, float] = {}
@@ -169,9 +177,30 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     has_references = (skill_path / "references").exists()
     has_readme = (skill_path / "README.md").exists()
 
-    # Coverage: percentage of expected structure present
-    structure_items = [has_skill_md, has_tests, has_scripts, has_references, has_readme]
-    scores["coverage"] = sum(structure_items) / len(structure_items)
+    # Coverage: SKILL.md is the only hard requirement.
+    # Optional dirs (scripts/, references/, tests/) add bonus points.
+    # references/ is expected when SKILL.md > 500 lines.
+    if not has_skill_md:
+        scores["coverage"] = 0.0
+    else:
+        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        lines = len(content.split("\n"))
+        base = 0.6  # SKILL.md exists = 60%
+        bonus = 0.0
+        bonus_items = 0
+        # Optional structure bonuses
+        if has_scripts:
+            bonus += 0.1; bonus_items += 1
+        if has_references:
+            bonus += 0.1; bonus_items += 1
+        if has_tests:
+            bonus += 0.1; bonus_items += 1
+        if has_readme:
+            bonus += 0.1; bonus_items += 1
+        scores["coverage"] = min(1.0, base + bonus)
+        # Penalty: SKILL.md > 500 lines without references/ (progressive disclosure)
+        if lines > 500 and not has_references:
+            scores["coverage"] = max(0.3, scores["coverage"] - 0.2)
 
     # Accuracy: SKILL.md quality (granular 0.0-1.0 scoring)
     if has_skill_md:
@@ -212,7 +241,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         scores["accuracy"] = 0.0
         scores["efficiency"] = 0.0
 
-    # Reliability: test results
+    # Reliability: test results (pure-text skills without scripts/ default to 1.0)
     if has_tests:
         try:
             result = subprocess.run(
@@ -223,8 +252,12 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             scores["reliability"] = 1.0 if result.returncode == 0 else 0.5
         except (subprocess.TimeoutExpired, FileNotFoundError):
             scores["reliability"] = 0.3
+    elif has_scripts:
+        # Has scripts but no tests → should have tests
+        scores["reliability"] = 0.3
     else:
-        scores["reliability"] = 0.0
+        # Pure-text skill (no scripts, no tests) → perfectly valid
+        scores["reliability"] = 1.0
 
     # Security: check SKILL.md only (not implementation code which legitimately
     # uses "password" parameters, "secrets" module, etc.)
@@ -269,7 +302,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 _IMPROVEMENT_STRATEGIES: dict[str, dict[str, Any]] = {
     "coverage": {
         "type": "coverage",
-        "description": "Create missing skill structure (tests dir, references dir, README)",
+        "description": "Add references/ for progressive disclosure (only if SKILL.md > 500 lines)",
     },
     "accuracy": {
         "type": "accuracy",
@@ -277,7 +310,7 @@ _IMPROVEMENT_STRATEGIES: dict[str, dict[str, Any]] = {
     },
     "reliability": {
         "type": "reliability",
-        "description": "Add test stubs for untested scripts",
+        "description": "Add test stubs for skills that have scripts/ but no tests/",
     },
     "efficiency": {
         "type": "efficiency",
@@ -394,21 +427,25 @@ def apply_improvement(skill_path: Path, candidate: dict[str, Any]) -> bool:
 
 
 def _apply_coverage_improvement(skill_path: Path) -> bool:
-    """Create missing directories and placeholder files."""
-    changed = False
-    for subdir in ("tests", "references", "scripts"):
-        d = skill_path / subdir
-        if not d.exists():
-            d.mkdir(parents=True, exist_ok=True)
-            changed = True
-    if not (skill_path / "README.md").exists():
-        name = skill_path.name
-        (skill_path / "README.md").write_text(
-            f"# {name}\n\nAuto-generated README for {name} skill.\n",
-            encoding="utf-8",
-        )
-        changed = True
-    return changed
+    """Create references/ when SKILL.md is too long (progressive disclosure).
+
+    Per skill-creator spec, only SKILL.md is required.  We do NOT auto-create
+    tests/, README.md, or scripts/ — those are optional and should only exist
+    when the skill author intentionally adds them.
+    """
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        return False
+
+    content = skill_md.read_text(encoding="utf-8")
+    lines = len(content.split("\n"))
+
+    # Only create references/ if SKILL.md exceeds 500 lines
+    if lines > 500 and not (skill_path / "references").exists():
+        (skill_path / "references").mkdir(parents=True, exist_ok=True)
+        return True
+
+    return False
 
 
 def _apply_accuracy_improvement(skill_path: Path) -> bool:
@@ -455,7 +492,15 @@ def _apply_accuracy_improvement(skill_path: Path) -> bool:
 
 
 def _apply_reliability_improvement(skill_path: Path) -> bool:
-    """Create a minimal test file if tests/ is empty."""
+    """Create a minimal test file for skills that have scripts/ but no tests/.
+
+    Pure-text skills (no scripts/) should NOT get auto-generated tests —
+    they score reliability=1.0 by default.
+    """
+    # Only add tests for skills that actually have scripts to test
+    if not (skill_path / "scripts").exists():
+        return False
+
     tests_dir = skill_path / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     if any(tests_dir.glob("test_*.py")):
