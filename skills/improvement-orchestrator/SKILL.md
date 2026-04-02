@@ -12,3 +12,19 @@ tags: [orchestrator, self-improvement, automation, pipeline]
 Coordinates the full improvement pipeline: Generator -> Discriminator -> Executor -> Gate.
 
 See `references/` for architecture, adapters, guardrails, and phase roadmap.
+
+## When to Use
+- Coordinate a full improvement cycle on a skill
+- Run the Proposer→Discriminator→Gate→Executor pipeline
+- Retry failed improvements with trace-aware feedback
+
+## Pipeline
+```text
+propose → discriminate → gate → execute → learn
+         ↻ Ralph Wiggum: fail → inject trace → retry (max 3)
+```
+
+## CLI
+```bash
+python3 scripts/orchestrate.py --target /path/to/skill --auto
+```

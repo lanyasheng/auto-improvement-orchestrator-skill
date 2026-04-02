@@ -82,7 +82,6 @@ def test_assertion_system():
     print(f"✅ Threshold test passed: {threshold_result.message}")
 
     print("\n✅ Assertion System tests passed!")
-    return True
 
 
 def test_critic_engine_v2():
@@ -149,8 +148,6 @@ def test_critic_engine_v2():
     print(f"✅ JSON results exported successfully")
     print("\n✅ Critic Engine V2 tests passed!")
 
-    return True
-
 
 def test_real_skill_evaluator():
     """测试真实 Skill 评估器"""
@@ -214,7 +211,6 @@ def evaluate(input_data):
         print(f"   Output: {result.actual_output}")
 
     print("\n✅ Real Skill Evaluator tests passed!")
-    return True
 
 
 def test_scripts_interfaces_integration():
@@ -260,7 +256,6 @@ def test_scripts_interfaces_integration():
     print(f"   Assertion-only score: {score.assertion_score:.4f}")
 
     print("\n✅ Scripts/Interfaces Integration tests passed!")
-    return True
 
 
 def test_mock_reduction():
@@ -291,7 +286,6 @@ def test_mock_reduction():
     print(f"✅ Weights sum to 1.0: {total}")
 
     print("\n✅ Mock Reduction verification passed!")
-    return True
 
 
 def run_all_tests():
