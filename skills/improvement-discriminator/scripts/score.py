@@ -29,7 +29,7 @@ from lib.state_machine import (
     update_state,
 )
 
-CATEGORY_BONUS = {
+DEFAULT_CATEGORY_WEIGHTS = {
     "docs": 4.0,
     "reference": 3.5,
     "guardrail": 3.5,
@@ -37,9 +37,58 @@ CATEGORY_BONUS = {
     "prompt": 1.0,
     "tests": 1.5,
 }
+CATEGORY_BONUS = DEFAULT_CATEGORY_WEIGHTS  # backward compat alias
 RISK_PENALTY = {"low": 0.0, "medium": 2.0, "high": 4.5}
 HEURISTIC_WEIGHT = 0.7
 EVALUATOR_WEIGHT = 0.3
+
+
+# ---------------------------------------------------------------------------
+# Multi-reviewer panel (Phase 2A)
+# ---------------------------------------------------------------------------
+
+
+class ReviewerConfig:
+    """Configuration for a single reviewer in the panel."""
+
+    def __init__(
+        self,
+        name: str,
+        category_weights: dict | None = None,
+        risk_sensitivity: float = 1.0,
+        use_evaluator: bool = False,
+    ):
+        self.name = name
+        self.category_weights = category_weights or dict(DEFAULT_CATEGORY_WEIGHTS)
+        self.risk_sensitivity = risk_sensitivity
+        self.use_evaluator = use_evaluator
+
+
+DEFAULT_REVIEWERS = [
+    ReviewerConfig(
+        "structural",
+        category_weights={
+            "docs": 5.0,
+            "reference": 4.0,
+            "guardrail": 4.0,
+            "workflow": 2.0,
+            "prompt": 1.5,
+            "tests": 2.0,
+        },
+    ),
+    ReviewerConfig(
+        "conservative",
+        risk_sensitivity=1.5,
+        category_weights={
+            "docs": 3.0,
+            "reference": 3.0,
+            "guardrail": 5.0,
+            "workflow": 1.0,
+            "prompt": 0.5,
+            "tests": 1.0,
+        },
+    ),
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +100,11 @@ def parse_args() -> argparse.Namespace:
         "--use-evaluator-evidence",
         action="store_true",
         help="Blend Phase 1 skill-evaluator rubric/category/boundary evidence into scoring.",
+    )
+    parser.add_argument(
+        "--panel",
+        action="store_true",
+        help="Enable multi-reviewer blind panel scoring (Phase 2A).",
     )
     return parser.parse_args()
 
@@ -179,6 +233,119 @@ def score_candidate(candidate: dict, *, use_evaluator_evidence: bool = False) ->
     return payload
 
 
+def _heuristic_score_with_config(candidate: dict, config: ReviewerConfig) -> tuple[float, float]:
+    """Compute heuristic score using reviewer-specific category weights and risk sensitivity."""
+    category = candidate.get("category", "unknown")
+    risk_level = candidate.get("risk_level", "medium")
+    source_refs = candidate.get("source_refs", []) or []
+    executor_support = bool(candidate.get("executor_support"))
+    base = 4.0
+    category_bonus = config.category_weights.get(category, 0.5)
+    source_signal = min(len(source_refs), 3) * 0.5
+    support_bonus = 0.5 if executor_support else 0.0
+    protected_penalty = 2.5 if protected_target(candidate.get("target_path", "")) else 0.0
+    raw_risk = RISK_PENALTY.get(risk_level, 2.0) + protected_penalty
+    risk_penalty = round(raw_risk * config.risk_sensitivity, 2)
+    score = max(0.0, min(10.0, round(base + category_bonus + source_signal + support_bonus - risk_penalty, 2)))
+    return score, risk_penalty
+
+
+def score_candidate_with_config(candidate: dict, config: ReviewerConfig) -> dict:
+    """Score a candidate using a specific ReviewerConfig.
+
+    Mirrors score_candidate() but substitutes the reviewer's category_weights
+    and risk_sensitivity.  Evaluator evidence is blended only when
+    config.use_evaluator is True.
+    """
+    heuristic, risk_penalty = _heuristic_score_with_config(candidate, config)
+    evidence = build_evaluator_evidence(candidate) if config.use_evaluator else None
+    evaluator_score = evidence.get("overall_score_10") if evidence else None
+    final_score = heuristic
+    if evaluator_score is not None:
+        final_score = round((heuristic * HEURISTIC_WEIGHT) + (evaluator_score * EVALUATOR_WEIGHT), 2)
+
+    blockers = build_blockers(candidate, evidence=evidence)
+    recommendation = build_recommendation(candidate, final_score, blockers, evidence=evidence)
+    judge_notes = build_judge_notes(candidate, recommendation, blockers, evidence=evidence)
+
+    payload = {
+        **candidate,
+        "score": final_score,
+        "heuristic_score": heuristic,
+        "risk_penalty": risk_penalty,
+        "recommendation": recommendation,
+        "blockers": blockers,
+        "judge_notes": judge_notes,
+        "reviewer": config.name,
+        "judge_adapter": {
+            "name": f"multi-reviewer-{config.name}",
+            "future_replacement": "full-skill-evaluator-adapter",
+            "evaluated_at": utc_now_iso(),
+            "evaluator_evidence_enabled": config.use_evaluator,
+        },
+    }
+    if evidence:
+        payload["score_components"] = {
+            "heuristic_weight": HEURISTIC_WEIGHT,
+            "evaluator_weight": EVALUATOR_WEIGHT,
+            "heuristic_score": heuristic,
+            "evaluator_score": evaluator_score,
+        }
+        payload["evaluator_score"] = evaluator_score
+        payload["evaluator_evidence"] = evidence
+    return payload
+
+
+def run_multi_reviewer_panel(
+    candidate: dict,
+    reviewers: list[ReviewerConfig] | None = None,
+) -> dict:
+    """Run blind multi-reviewer panel on a candidate.
+
+    Each reviewer scores independently (no visibility into other scores).
+    The panel then determines consensus via cognitive labels:
+      - CONSENSUS: all reviewers agree on the recommendation
+      - VERIFIED:  2+ reviewers agree (majority)
+      - DISPUTED:  no majority; default recommendation becomes "hold"
+    """
+    reviewers = reviewers or DEFAULT_REVIEWERS
+    reviews: list[dict] = []
+    for reviewer in reviewers:
+        scored = score_candidate_with_config(candidate, reviewer)
+        reviews.append({
+            "reviewer": reviewer.name,
+            "score": scored["score"],
+            "recommendation": scored["recommendation"],
+        })
+
+    # --- Determine consensus ---
+    recommendations = [r["recommendation"] for r in reviews]
+    unique_recs = set(recommendations)
+
+    if len(unique_recs) == 1:
+        label = "CONSENSUS"
+        final_rec = recommendations[0]
+    else:
+        # Find the most common recommendation
+        from collections import Counter
+        counts = Counter(recommendations)
+        most_common_rec, most_common_count = counts.most_common(1)[0]
+        if most_common_count >= 2:
+            label = "VERIFIED"
+            final_rec = most_common_rec
+        else:
+            label = "DISPUTED"
+            final_rec = "hold"  # Default to hold on dispute
+
+    avg_score = sum(r["score"] for r in reviews) / len(reviews)
+    return {
+        "panel_reviews": reviews,
+        "cognitive_label": label,
+        "final_recommendation": final_rec,
+        "aggregated_score": round(avg_score, 2),
+    }
+
+
 def main() -> int:
     args = parse_args()
     state_root = Path(args.state_root).expanduser().resolve()
@@ -187,11 +354,26 @@ def main() -> int:
     candidate_artifact = read_json(Path(args.input).expanduser().resolve())
     run_id = candidate_artifact["run_id"]
     target_path = candidate_artifact["target"]["path"]
-    ranked_candidates = sorted(
-        [score_candidate(candidate, use_evaluator_evidence=args.use_evaluator_evidence) for candidate in candidate_artifact.get("candidates", [])],
-        key=lambda item: item["score"],
-        reverse=True,
-    )
+    raw_candidates = candidate_artifact.get("candidates", [])
+
+    if args.panel:
+        # Multi-reviewer panel mode (Phase 2A)
+        panel_results = []
+        for candidate in raw_candidates:
+            panel = run_multi_reviewer_panel(candidate)
+            panel_results.append({
+                **candidate,
+                "score": panel["aggregated_score"],
+                "recommendation": panel["final_recommendation"],
+                "panel": panel,
+            })
+        ranked_candidates = sorted(panel_results, key=lambda item: item["score"], reverse=True)
+    else:
+        ranked_candidates = sorted(
+            [score_candidate(candidate, use_evaluator_evidence=args.use_evaluator_evidence) for candidate in raw_candidates],
+            key=lambda item: item["score"],
+            reverse=True,
+        )
 
     output_path = Path(args.output).expanduser().resolve() if args.output else state_root / "rankings" / f"{run_id}.json"
     ranking_artifact = {
@@ -203,7 +385,7 @@ def main() -> int:
         "created_at": utc_now_iso(),
         "source_candidate_artifact": args.input,
         "target": candidate_artifact["target"],
-        "critic_mode": "heuristic+evaluator-phase1" if args.use_evaluator_evidence else "heuristic-only",
+        "critic_mode": "multi-reviewer-panel" if args.panel else ("heuristic+evaluator-phase1" if args.use_evaluator_evidence else "heuristic-only"),
         "scored_candidates": ranked_candidates,
         "summary": {
             "accept_for_execution": sum(1 for item in ranked_candidates if item["recommendation"] == "accept_for_execution"),
