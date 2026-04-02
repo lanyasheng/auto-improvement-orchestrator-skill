@@ -1,80 +1,71 @@
 ---
 name: benchmark-store
-version: 0.2.0
-description: "Central store for frozen benchmarks, hidden test suites, Pareto front tracking, and evaluation standards. Provides immutable reference data for the improvement pipeline. Not for scoring candidates (use improvement-discriminator) or running improvements (use improvement-learner)."
-author: OpenClaw Team
+description: "当需要初始化基准数据库、对比 skill 评分与历史基线、查看 Pareto front 是否有维度回退、或查阅质量分级标准时使用。不用于给候选打分（用 improvement-discriminator）或自动改进（用 improvement-learner）。"
 license: MIT
-tags: [benchmark, frozen-tests, hidden-tests, evaluation, data-store, pareto]
 triggers:
   - benchmark data
   - frozen tests
   - pareto front
   - evaluation standards
+  - 基准数据
+  - 质量分级
 ---
 
 # Benchmark Store
 
-Central store for frozen benchmarks, hidden test suites, Pareto front tracking, and evaluation standards.
+Frozen benchmarks, hidden tests, Pareto front, and evaluation standards.
 
 ## When to Use
 
-- Initialize or query the benchmark database
-- Compare a skill's scores against frozen baselines
-- Track Pareto front evolution (no dimension may regress beyond 5% tolerance)
-- Reference evaluation standards and quality tiers
+- 初始化或查询基准数据库
+- 对比 skill 评分与冻结基线
+- 检查 Pareto front（任何维度回退 >5% 即拒绝）
+- 查阅质量分级标准（POWERFUL/SOLID/GENERIC/WEAK）
 
 ## When NOT to Use
 
-- **Scoring candidates** → use `improvement-discriminator`
-- **Running self-improvement** → use `improvement-learner`
-- **Full pipeline** → use `improvement-orchestrator`
+- **给候选打分** → use `improvement-discriminator`
+- **自动改进** → use `improvement-learner`
+- **全流程** → use `improvement-orchestrator`
+
+## Quality Tiers
+
+| Tier | Score | Ship? |
+|------|-------|-------|
+| POWERFUL ⭐ | ≥ 85% | Marketplace ready |
+| SOLID | 70–84% | GitHub |
+| GENERIC | 55–69% | Needs iteration |
+| WEAK | < 55% | Reject or rewrite |
 
 ## Pareto Front
 
-The Pareto front ensures multi-dimensional quality: a new entry is accepted only if it does not cause any dimension to regress more than 5%.
-
 ```python
-# ParetoEntry.dominates(other) → True if all dimensions ≥ other
-# ParetoFront.check_regression(new_scores) → {"regressed": bool, "regressions": [...]}
+ParetoFront.check_regression(new_scores) → {"regressed": bool, "regressions": [...]}
+# 5% tolerance — minor fluctuations allowed
 ```
 
 ## CLI
 
 ```bash
-# Initialize benchmark database
 python3 scripts/benchmark_db.py --init --db benchmarks.db
-
-# Compare a skill against baselines
-python3 scripts/benchmark_db.py \
-  --compare \
-  --skill /path/to/skill \
-  --category general
+python3 scripts/benchmark_db.py --compare --skill /path/to/skill --category general
 ```
-
-## Quality Tiers (from evaluation-standards.md)
-
-| Tier | Score | Ship? |
-|------|-------|-------|
-| POWERFUL ⭐ | ≥ 85% | Yes — Marketplace ready |
-| SOLID | 70–84% | Yes — GitHub |
-| GENERIC | 55–69% | No — needs iteration |
-| WEAK | < 55% | No — reject or rewrite |
 
 ## Output Artifacts
 
 | Request | Deliverable |
 |---------|------------|
 | Init | SQLite database with schema |
-| Compare | JSON comparison report with per-dimension delta |
-| Pareto check | JSON with regressed flag and dimension-level details |
+| Compare | JSON comparison with per-dimension delta |
+| Pareto check | JSON with regressed flag and details |
 
 ## Related Skills
 
-- **improvement-learner**: Imports ParetoFront/ParetoEntry for self-improvement loop
-- **improvement-gate**: RegressionGate uses Pareto data to check for regressions
-- **improvement-discriminator**: References evaluation standards for scoring context
+- **improvement-learner**: Imports ParetoFront for self-improvement loop
+- **improvement-gate**: RegressionGate uses Pareto data
+- **improvement-discriminator**: References evaluation standards
 
 ## Data Files
 
-- `data/evaluation-standards.md` — Quality tiers, evaluation dimensions, category weights (v2.0.0)
-- `data/fixtures/` — Frozen test fixtures for benchmark validation
+- `data/evaluation-standards.md` — Quality tiers, dimensions, weights (v2.0.0)
+- `data/fixtures/` — Frozen test fixtures

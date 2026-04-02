@@ -1,14 +1,12 @@
 ---
 name: improvement-generator
-version: 0.2.0
-description: "Generates structured improvement candidates by analyzing target skill, feedback signals, and failure traces (GEPA trace-aware). Supports trace injection for retry loops. Not for scoring (use improvement-discriminator) or evaluation (use improvement-learner)."
-author: OpenClaw Team
+description: "当需要为目标 skill 生成改进候选、把上次失败信息注入下一轮生成、或分析历史记忆模式来避免重复失败时使用。支持 --trace 注入失败上下文。不用于打分（用 improvement-discriminator）或评估（用 improvement-learner）。"
 license: MIT
-tags: [generator, proposer, candidates, self-improvement, trace-aware]
 triggers:
   - generate candidates
   - propose improvements
-  - create improvement
+  - 生成候选
+  - 改进建议
 ---
 
 # Improvement Generator
@@ -17,19 +15,17 @@ Produces ranked improvement candidates from target analysis, feedback signals, a
 
 ## When to Use
 
-- Generate structured improvement proposals for a target skill
-- Inject failure traces from previous attempts (GEPA trace-aware feedback)
-- Analyze memory patterns to avoid previously failed approaches
+- 为目标 skill 生成结构化改进候选
+- 把上次失败的 trace 注入下一轮（GEPA trace-aware）
+- 根据记忆模式避开已经失败过 ≥3 次的策略
 
 ## When NOT to Use
 
-- **Scoring candidates** → use `improvement-discriminator`
-- **Evaluating skill structure** → use `improvement-learner`
-- **Full pipeline** → use `improvement-orchestrator`
+- **给候选打分** → use `improvement-discriminator`
+- **评估 skill 结构** → use `improvement-learner`
+- **全流程** → use `improvement-orchestrator`
 
-## Trace-Aware Candidate Generation
-
-When `--trace` is provided, the generator adjusts candidate priorities based on what failed previously:
+## Trace-Aware Generation
 
 ```
 Previous failure on "accuracy" dimension
@@ -40,22 +36,14 @@ Previous failure on "accuracy" dimension
 ## CLI
 
 ```bash
-# Basic candidate generation
-python3 scripts/propose.py \
-  --target /path/to/skill \
-  --out candidates.json
+# Basic generation
+python3 scripts/propose.py --target /path/to/skill --out candidates.json
 
-# With failure trace injection (for retry loops)
-python3 scripts/propose.py \
-  --target /path/to/skill \
-  --trace previous_failure.json \
-  --out candidates.json
+# With failure trace (retry loop)
+python3 scripts/propose.py --target /path/to/skill --trace failure.json --out candidates.json
 
-# With feedback from memory
-python3 scripts/propose.py \
-  --target /path/to/skill \
-  --feedback memory_patterns.json \
-  --out candidates.json
+# With memory patterns
+python3 scripts/propose.py --target /path/to/skill --feedback patterns.json --out candidates.json
 ```
 
 ## Output Artifacts
@@ -63,10 +51,10 @@ python3 scripts/propose.py \
 | Request | Deliverable |
 |---------|------------|
 | Generate | JSON array of ranked candidates with category, risk_level, execution_plan |
-| With trace | Same format, but priorities adjusted based on failure analysis |
+| With trace | Same format, priorities adjusted based on failure analysis |
 
 ## Related Skills
 
 - **improvement-discriminator**: Scores the candidates this skill produces
-- **improvement-orchestrator**: Calls generator as stage 1 in the pipeline
+- **improvement-orchestrator**: Calls generator as stage 1
 - **improvement-learner**: Provides evaluation data that informs candidate selection

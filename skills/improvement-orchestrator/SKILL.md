@@ -1,15 +1,14 @@
 ---
 name: improvement-orchestrator
-version: 0.2.0
-description: "Unified entry for structured self-improvement workflows. Coordinates Generator→Discriminator→Gate→Executor→Learner pipeline with Ralph Wiggum retry. Not for single-skill evaluation (use improvement-learner) or manual scoring (use improvement-discriminator)."
-author: OpenClaw Team
+description: "当需要一键跑完「生成→评分→门禁→执行→学习」全流程、失败后自动重试、或批量改进多个 skill 时使用。不用于单独评估 skill 质量（用 improvement-learner）或手动打分（用 improvement-discriminator）。"
 license: MIT
-tags: [orchestrator, self-improvement, automation, pipeline]
 triggers:
   - improve skill
   - run improvement pipeline
   - self-improvement loop
   - orchestrate improvement
+  - 批量改进
+  - 一键优化
 ---
 
 # Improvement Orchestrator
@@ -19,15 +18,15 @@ Coordinates the full improvement pipeline: Generator → Discriminator → Gate 
 ## When to Use
 
 - Run a full improvement cycle on one or more skills
-- Coordinate the Generator→Discriminator→Gate→Executor pipeline end-to-end
+- Coordinate the 5-stage pipeline end-to-end
 - Retry failed improvements with trace-aware feedback (Ralph Wiggum loop)
 
 ## When NOT to Use
 
-- **Single-skill evaluation only** → use `improvement-learner` directly
-- **Manual candidate scoring** → use `improvement-discriminator` directly
-- **One-off file edits** → use `improvement-executor` directly
-- **Benchmark data management** → use `benchmark-store` directly
+- **只想检查 skill 质量评分** → use `improvement-learner`
+- **只想手动给候选打分** → use `improvement-discriminator`
+- **只想改一个文件** → use `improvement-executor`
+- **只想查基准数据** → use `benchmark-store`
 
 ## Pipeline
 
@@ -36,18 +35,25 @@ propose → discriminate → gate → execute → learn
          ↻ Ralph Wiggum: fail → inject trace → retry (max 3)
 ```
 
+<example>
+正确用法: 对一个 skill 运行全流程改进
+$ python3 scripts/orchestrate.py --target /path/to/skill --state-root /tmp/state --out result.json
+→ 自动完成: 生成候选 → 多人盲审 → 6层门禁 → 执行变更 → 记录结果
+→ 失败时自动注入 trace 重试（最多 3 次）
+</example>
+
+<anti-example>
+错误用法: 只想看评分却用了 orchestrator
+$ python3 scripts/orchestrate.py --target /path/to/skill  # 会执行变更！
+→ 应该用: python3 improvement-learner/scripts/self_improve.py --skill-path /path/to/skill --max-iterations 1
+</anti-example>
+
 ## CLI
 
 ```bash
-# Full pipeline run
 python3 scripts/orchestrate.py \
   --target /path/to/skill \
   --state-root /path/to/state \
-  --out result.json
-
-# With custom retry limit
-python3 scripts/orchestrate.py \
-  --target /path/to/skill \
   --max-retries 3 \
   --out result.json
 ```
@@ -56,21 +62,20 @@ python3 scripts/orchestrate.py \
 
 | Request | Deliverable |
 |---------|------------|
-| Full pipeline run | JSON with all stage outputs, final scores, and execution trace |
+| Full pipeline | JSON with all stage outputs, final scores, execution trace |
 | Retry cycle | Updated candidates with injected failure traces |
 
 ## Related Skills
 
 - **improvement-generator**: Produces candidate proposals (stage 1)
-- **improvement-discriminator**: Scores candidates via multi-reviewer panel (stage 2)
+- **improvement-discriminator**: Multi-reviewer panel scoring (stage 2)
 - **improvement-gate**: 6-layer quality gate (stage 3)
 - **improvement-executor**: Applies changes with backup/rollback (stage 4)
-- **improvement-learner**: Karpathy self-improvement loop and progress tracking (stage 5)
+- **improvement-learner**: Karpathy self-improvement loop (stage 5)
 - **benchmark-store**: Frozen benchmarks and Pareto front data
 
 ## References
 
 - [Architecture](references/architecture.md) — System design and data flow
 - [Guardrails](references/guardrails.md) — Safety rules and protected targets
-- [Phases](references/phases.md) — Roadmap and phase definitions
 - [End-to-End Demo](references/end-to-end-demo.md) — Complete walkthrough
