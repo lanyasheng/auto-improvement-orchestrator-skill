@@ -15,11 +15,6 @@ Central store for frozen benchmarks, hidden test suites, and historical evaluati
 - Manage frozen benchmark test cases for skill evaluation
 - Track Pareto-front evolution across improvement runs
 
-
-## When NOT to Use
-
-- [Define exclusion conditions here]
-
 ## CLI
 ```bash
 python3 scripts/benchmark_db.py --init --db benchmarks.db
