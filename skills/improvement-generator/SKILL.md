@@ -15,6 +15,11 @@ Produces ranked improvement candidates from target analysis and feedback signals
 - Generate structured improvement proposals for a skill
 - Analyze feedback, memory, and source material to produce candidates
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## CLI
 ```bash
 python3 scripts/propose.py --target /path/to/skill --out candidates.json
