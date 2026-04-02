@@ -15,6 +15,11 @@ Tracks capability evolution and drives autonomous improvement cycles.
 - Track skill evaluation scores over time
 - Drive a Karpathy-style self-improvement loop
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## CLI
 ```bash
 python3 scripts/track_progress.py --skill /path/to/skill --out progress.json
