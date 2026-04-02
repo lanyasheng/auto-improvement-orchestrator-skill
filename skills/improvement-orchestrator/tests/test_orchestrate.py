@@ -457,6 +457,72 @@ class TestRunScript:
                 orchestrate._run_script(["python3", "fake.py"], "proposer")
 
 
+
+class TestRunScriptNew:
+    """Tests for the new run_script function."""
+
+    def test_raises_on_nonzero_exit(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = ""
+        mock_result.stderr = "traceback: something broke"
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="executor failed"):
+                orchestrate.run_script(Path("fake.py"), [], "executor")
+
+    def test_raises_on_empty_stdout(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "   \n  \n  "
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError, match="produced no output"):
+                orchestrate.run_script(Path("fake.py"), [], "scorer")
+
+    def test_returns_absolute_path_when_exists(self, tmp_path):
+        artifact = tmp_path / "artifact.json"
+        artifact.write_text("{}")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = f"  \n{artifact}\n"
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = orchestrate.run_script(Path("fake.py"), ["--flag"], "proposer")
+        assert result == artifact
+
+    def test_resolves_relative_path_via_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        artifact = tmp_path / "out" / "result.json"
+        artifact.parent.mkdir()
+        artifact.write_text("{}")
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "out/result.json\n"
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = orchestrate.run_script(Path("fake.py"), [], "gate")
+        assert result.exists()
+        assert result.name == "result.json"
+
+    def test_stderr_included_in_error_message(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 2
+        mock_result.stdout = ""
+        mock_result.stderr = "ImportError: no module named foo"
+        with patch("subprocess.run", return_value=mock_result):
+            with pytest.raises(RuntimeError) as exc_info:
+                orchestrate.run_script(Path("fake.py"), [], "proposer")
+        assert "ImportError: no module named foo" in str(exc_info.value)
+
+    def test_returns_path_even_when_nonexistent(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "/nonexistent/artifact.json\n"
+        mock_result.stderr = ""
+        with patch("subprocess.run", return_value=mock_result):
+            result = orchestrate.run_script(Path("fake.py"), [], "executor")
+        assert result == Path("/nonexistent/artifact.json")
+
 # ---------------------------------------------------------------------------
 # Tests: CLI parse_args
 # ---------------------------------------------------------------------------

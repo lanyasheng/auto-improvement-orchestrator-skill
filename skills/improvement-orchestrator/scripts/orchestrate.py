@@ -65,6 +65,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 
+def run_script(script_path, args, label):
+    """Run a role script and return the artifact path it produced."""
+    cmd = [sys.executable, str(script_path)] + args
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{label} failed (exit {result.returncode}):\n"
+            f"  stderr: {result.stderr.strip()}\n"
+            f"  stdout: {result.stdout.strip()}"
+        )
+    lines = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+    if not lines:
+        raise RuntimeError(f"{label} produced no output on stdout")
+    raw_path = lines[-1]
+    artifact_path = Path(raw_path)
+    if artifact_path.is_absolute() and artifact_path.exists():
+        return artifact_path
+    for prefix in [Path.cwd(), REPO_ROOT]:
+        candidate = prefix / raw_path
+        if candidate.exists():
+            return candidate.resolve()
+    return artifact_path
+
+
 def _run_script(cmd: list[str], label: str) -> str:
     """Run a subprocess and return its stdout (stripped).
 

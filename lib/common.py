@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = "1.0"
 KEEP_CATEGORIES = {"docs", "reference", "guardrail"}
-EXECUTOR_SUPPORTED_CATEGORIES = KEEP_CATEGORIES  # Alias — always in sync
+EXECUTOR_SUPPORTED_CATEGORIES = KEEP_CATEGORIES | {"prompt"}  # superset: includes SKILL.md edits
 PROTECTED_KEYWORDS = (
     "trading",
     "gateway",

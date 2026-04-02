@@ -287,4 +287,4 @@ class TestComputeTargetProfile:
 
 class TestConstants:
     def test_keep_is_subset_of_executor_supported(self):
-        assert KEEP_CATEGORIES == EXECUTOR_SUPPORTED_CATEGORIES
+        assert KEEP_CATEGORIES.issubset(EXECUTOR_SUPPORTED_CATEGORIES)

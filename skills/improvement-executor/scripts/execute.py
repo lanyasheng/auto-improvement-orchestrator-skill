@@ -91,6 +91,90 @@ def append_markdown_section(target_path: Path, plan: dict) -> dict:
     }
 
 
+
+def _make_diff(before, after, path):
+    """Generate a unified diff string between before/after content."""
+    return "\n".join(difflib.unified_diff(
+        before.split("\n"), after.split("\n"),
+        fromfile=str(path), tofile=str(path), lineterm="",
+    ))
+
+
+def replace_markdown_section(target_path, plan):
+    """Replace a section identified by heading with new content."""
+    content = read_text(target_path)
+    heading = plan.get("section_heading", "")
+    new_lines = plan.get("content_lines", [])
+    lines = content.split("\n")
+    start_idx = None
+    end_idx = len(lines)
+    heading_level = len(heading) - len(heading.lstrip("#"))
+    for i, line in enumerate(lines):
+        if line.strip() == heading.strip():
+            start_idx = i
+        elif start_idx is not None and line.startswith("#") and (len(line) - len(line.lstrip("#"))) <= heading_level:
+            end_idx = i
+            break
+    if start_idx is None:
+        return {"status": "no_change", "modified": False, "diff": "", "diff_summary": {"reason": f"section '{heading}' not found", "changed_lines": 0}}
+    replacement = [heading] + [f"- {line}" if not line.startswith("-") else line for line in new_lines]
+    new_content = "\n".join(lines[:start_idx] + replacement + lines[end_idx:])
+    diff = _make_diff(content, new_content, target_path)
+    write_text(target_path, new_content)
+    return {"status": "success", "modified": True, "diff": diff, "diff_summary": {"reason": "replaced_section", "changed_lines": len(new_lines)}}
+
+
+def insert_before_section(target_path, plan):
+    """Insert content before a specified section heading."""
+    content = read_text(target_path)
+    heading = plan.get("section_heading", "")
+    new_lines = plan.get("content_lines", [])
+    lines = content.split("\n")
+    insert_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() == heading.strip():
+            insert_idx = i
+            break
+    if insert_idx is None:
+        return {"status": "no_change", "modified": False, "diff": "", "diff_summary": {"reason": f"section '{heading}' not found", "changed_lines": 0}}
+    insertion = [f"- {line}" if not line.startswith("-") and not line.startswith("#") else line for line in new_lines]
+    insertion.append("")
+    new_content = "\n".join(lines[:insert_idx] + insertion + lines[insert_idx:])
+    diff = _make_diff(content, new_content, target_path)
+    write_text(target_path, new_content)
+    return {"status": "success", "modified": True, "diff": diff, "diff_summary": {"reason": "inserted_before_section", "changed_lines": len(new_lines)}}
+
+
+def update_yaml_frontmatter(target_path, plan):
+    """Update YAML frontmatter fields in a markdown file."""
+    content = read_text(target_path)
+    updates = plan.get("frontmatter_updates", {})
+    if not content.startswith("---"):
+        return {"status": "no_change", "modified": False, "diff": "", "diff_summary": {"reason": "no frontmatter found", "changed_lines": 0}}
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {"status": "no_change", "modified": False, "diff": "", "diff_summary": {"reason": "malformed frontmatter", "changed_lines": 0}}
+    try:
+        import yaml
+    except ImportError:
+        return {"status": "error", "modified": False, "diff": "", "diff_summary": {"reason": "PyYAML not available", "changed_lines": 0}}
+    frontmatter = yaml.safe_load(parts[1]) or {}
+    frontmatter.update(updates)
+    new_fm = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+    new_content = "---\n" + new_fm + "---" + parts[2]
+    diff = _make_diff(content, new_content, target_path)
+    write_text(target_path, new_content)
+    return {"status": "success", "modified": True, "diff": diff, "diff_summary": {"reason": "updated_frontmatter", "changed_lines": len(updates)}}
+
+
+ACTION_HANDLERS = {
+    "append_markdown_section": append_markdown_section,
+    "replace_markdown_section": replace_markdown_section,
+    "insert_before_section": insert_before_section,
+    "update_yaml_frontmatter": update_yaml_frontmatter,
+}
+
+
 def main() -> int:
     args = parse_args()
     state_root = Path(args.state_root).expanduser().resolve()
@@ -183,8 +267,9 @@ def main() -> int:
 
     plan = candidate.get("execution_plan", {})
     action = plan.get("action")
-    if action == "append_markdown_section":
-        result = append_markdown_section(target_file, plan)
+    handler = ACTION_HANDLERS.get(action)
+    if handler is not None:
+        result = handler(target_file, plan)
     else:
         result = {
             "status": "unsupported",
