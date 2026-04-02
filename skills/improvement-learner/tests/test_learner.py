@@ -152,11 +152,12 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "good-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
-            "---\nname: test\nversion: 0.1.0\n"
-            "description: A good skill for testing evaluation. Trigger on test, evaluation, quality.\n"
-            "author: Team\nlicense: MIT\ntags: [test]\n---\n\n# Good Skill\n\n"
+            "---\nname: test\n"
+            "description: 当需要运行测试评估、检查 skill 质量评分时使用。Use when you want to evaluate quality.\n"
+            "license: MIT\n---\n\n# Good Skill\n\n"
             "## When to Use\n- Testing\n\n## When NOT to Use\n- Production\n\n"
             "## CLI\n\n```bash\npython3 run.py\n```\n\n"
+            "<example>\nCorrect: run with --skill-path\n</example>\n\n"
             "## Output Artifacts\n\n| Request | Deliverable |\n|---------|------------|\n"
             "| Run tests | JSON report |\n\n"
             "## Related Skills\n\n- **benchmark-store**: For frozen benchmarks\n",
