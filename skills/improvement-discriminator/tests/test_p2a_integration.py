@@ -19,8 +19,9 @@ from pathlib import Path
 from datetime import datetime
 
 # 添加 interfaces 到 path
-interfaces_dir = Path(__file__).parent.parent / "interfaces"
-sys.path.insert(0, str(interfaces_dir))
+interfaces_dir = str(Path(__file__).parent.parent / "interfaces")
+if interfaces_dir not in sys.path:
+    sys.path.insert(0, interfaces_dir)
 
 
 def test_hidden_tests_data_source():

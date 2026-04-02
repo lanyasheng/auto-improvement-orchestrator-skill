@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 # repo root for lib.common imports
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+REPO_ROOT = _REPO_ROOT
 
 _execute_path = REPO_ROOT / "skills" / "improvement-executor" / "scripts" / "execute.py"
 _spec = importlib.util.spec_from_file_location("execute", _execute_path)

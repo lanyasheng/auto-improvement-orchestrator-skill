@@ -24,10 +24,10 @@ import time
 import importlib.util
 import sys
 
-# frozen_benchmark and hidden_tests are owned by benchmark-store
-_benchmark_store_interfaces = str(Path(__file__).resolve().parents[2] / "benchmark-store" / "interfaces")
-if _benchmark_store_interfaces not in sys.path:
-    sys.path.insert(0, _benchmark_store_interfaces)
+# Import from benchmark-store (sibling skill)
+_BENCHMARK_STORE = Path(__file__).resolve().parents[2] / "benchmark-store" / "interfaces"
+if str(_BENCHMARK_STORE) not in sys.path:
+    sys.path.insert(0, str(_BENCHMARK_STORE))
 
 try:
     from .assertions import (
@@ -64,23 +64,43 @@ except ImportError:
         ReviewDecision,
     )
 
-from frozen_benchmark import (
-    BenchmarkCase,
-    BenchmarkResult,
-    BenchmarkSuite,
-    FrozenBenchmark,
-    MetricType,
-    ScoringCriteria,
-    STANDARD_BENCHMARK_SUITE,
-)
-from hidden_tests import (
-    HiddenTest,
-    HiddenTestSuite,
-    TestResult,
-    TestType,
-    TestVisibility,
-    create_hidden_test,
-)
+try:
+    from frozen_benchmark import (
+        BenchmarkCase,
+        BenchmarkResult,
+        BenchmarkSuite,
+        FrozenBenchmark,
+        MetricType,
+        ScoringCriteria,
+        STANDARD_BENCHMARK_SUITE,
+    )
+except ImportError:
+    # Fallback: benchmark-store not available
+    FrozenBenchmark = None
+    BenchmarkSuite = None
+    STANDARD_BENCHMARK_SUITE = None
+    BenchmarkCase = None
+    BenchmarkResult = None
+    MetricType = None
+    ScoringCriteria = None
+
+try:
+    from hidden_tests import (
+        HiddenTest,
+        HiddenTestSuite,
+        TestResult,
+        TestType,
+        TestVisibility,
+        create_hidden_test,
+    )
+except ImportError:
+    # Fallback: benchmark-store not available
+    HiddenTest = None
+    HiddenTestSuite = None
+    TestResult = None
+    TestType = None
+    TestVisibility = None
+    create_hidden_test = None
 
 
 @dataclass

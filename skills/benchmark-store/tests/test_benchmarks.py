@@ -12,10 +12,13 @@ import pytest
 # Ensure repo root is on sys.path so `lib.common` resolves,
 # and scripts dir so we can import benchmark_db / pareto directly
 # (the parent directory uses hyphens, which is not a valid Python package name).
-REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(SCRIPTS_DIR))
+REPO_ROOT = _REPO_ROOT
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 from benchmark_db import (  # noqa: E402
     compare_with_benchmark,

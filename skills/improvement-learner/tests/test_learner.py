@@ -21,12 +21,16 @@ import pytest
 # ---------------------------------------------------------------------------
 # Path setup — mirror production import paths
 # ---------------------------------------------------------------------------
-REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-BENCHMARK_SCRIPTS = REPO_ROOT / "skills" / "benchmark-store" / "scripts"
-sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(SCRIPTS_DIR))
-sys.path.insert(0, str(BENCHMARK_SCRIPTS))
+BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
+REPO_ROOT = _REPO_ROOT
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+if str(BENCHMARK_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(BENCHMARK_SCRIPTS))
 
 from self_improve import (  # noqa: E402
     ImprovementResult,

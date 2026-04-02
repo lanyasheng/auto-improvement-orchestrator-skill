@@ -7,8 +7,12 @@ import sys
 from pathlib import Path
 
 # Ensure repo root and scripts/ are importable
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SCRIPTS_DIR = str(Path(__file__).resolve().parents[1] / "scripts")
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 import pytest
 

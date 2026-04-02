@@ -12,8 +12,10 @@ import importlib.util
 import pytest
 
 # repo root so we can import lib.common and the propose module
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+REPO_ROOT = _REPO_ROOT
 
 # The scripts directory uses dashes in skill names but Python needs underscores
 # for imports. We import via importlib to work around the path layout.

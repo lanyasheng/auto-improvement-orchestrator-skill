@@ -27,8 +27,10 @@ from typing import Any
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
-sys.path.insert(0, str(_REPO_ROOT))
-sys.path.insert(0, str(_BENCHMARK_SCRIPTS))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+if str(_BENCHMARK_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_BENCHMARK_SCRIPTS))
 
 from lib.common import read_json, write_json, utc_now_iso  # noqa: E402
 from pareto import ParetoFront, ParetoEntry  # noqa: E402

@@ -11,8 +11,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+REPO_ROOT = _REPO_ROOT
 
 # ---------------------------------------------------------------------------
 # Import the module directly via importlib (scripts dir is not a package).

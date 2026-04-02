@@ -19,8 +19,9 @@ import json
 from pathlib import Path
 
 # 添加 interfaces 到 path
-interfaces_dir = Path(__file__).parent.parent / "interfaces"
-sys.path.insert(0, str(interfaces_dir))
+interfaces_dir = str(Path(__file__).parent.parent / "interfaces")
+if interfaces_dir not in sys.path:
+    sys.path.insert(0, interfaces_dir)
 
 
 def test_assertion_system():
@@ -221,7 +222,8 @@ def test_scripts_interfaces_integration():
 
     # 测试 score.py 存在且 critic_engine 可导入
     scripts_dir = Path(__file__).parent.parent / "scripts"
-    sys.path.insert(0, str(scripts_dir))
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
 
     score_script = scripts_dir / "score.py"
     assert score_script.exists(), "score.py should exist"
