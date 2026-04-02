@@ -1,20 +1,12 @@
 """
 Improvement Discriminator Interfaces
 
-Frozen Benchmark + Hidden Tests + External Regression + Human Review + Assertions
+Critic Engine V2 + External Regression + Human Review + Assertions
+
+Note: FrozenBenchmark and HiddenTestSuite are owned by benchmark-store.
+Import them directly from skills/benchmark-store/interfaces/ if needed.
 """
 
-from .frozen_benchmark import FrozenBenchmark, BenchmarkResult, BenchmarkSuite
-from .hidden_tests import (
-    HiddenTest,
-    HiddenTestSuite,
-    TestResult,
-    TestType,
-    TestVisibility,
-    create_hidden_test,
-    DictHiddenTestDataSource,
-    FileHiddenTestDataSource,
-)
 from .critic_engine import CriticEngineV2, CriticConfig
 from .external_regression import (
     ExternalRegressionHook,
@@ -31,19 +23,6 @@ from .human_review import (
 )
 
 __all__ = [
-    # Frozen Benchmark
-    "FrozenBenchmark",
-    "BenchmarkResult",
-    "BenchmarkSuite",
-    # Hidden Tests
-    "HiddenTest",
-    "HiddenTestSuite",
-    "TestResult",
-    "TestType",
-    "TestVisibility",
-    "create_hidden_test",
-    "DictHiddenTestDataSource",
-    "FileHiddenTestDataSource",
     # Critic Engine V2
     "CriticEngineV2",
     "CriticConfig",

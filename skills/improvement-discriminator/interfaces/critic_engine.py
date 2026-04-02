@@ -24,24 +24,12 @@ import time
 import importlib.util
 import sys
 
+# frozen_benchmark and hidden_tests are owned by benchmark-store
+_benchmark_store_interfaces = str(Path(__file__).resolve().parents[2] / "benchmark-store" / "interfaces")
+if _benchmark_store_interfaces not in sys.path:
+    sys.path.insert(0, _benchmark_store_interfaces)
+
 try:
-    from .frozen_benchmark import (
-        BenchmarkCase,
-        BenchmarkResult,
-        BenchmarkSuite,
-        FrozenBenchmark,
-        MetricType,
-        ScoringCriteria,
-        STANDARD_BENCHMARK_SUITE,
-    )
-    from .hidden_tests import (
-        HiddenTest,
-        HiddenTestSuite,
-        TestResult,
-        TestType,
-        TestVisibility,
-        create_hidden_test,
-    )
     from .assertions import (
         AssertionCheck,
         CheckResult,
@@ -59,23 +47,6 @@ try:
         ReviewDecision,
     )
 except ImportError:
-    from frozen_benchmark import (
-        BenchmarkCase,
-        BenchmarkResult,
-        BenchmarkSuite,
-        FrozenBenchmark,
-        MetricType,
-        ScoringCriteria,
-        STANDARD_BENCHMARK_SUITE,
-    )
-    from hidden_tests import (
-        HiddenTest,
-        HiddenTestSuite,
-        TestResult,
-        TestType,
-        TestVisibility,
-        create_hidden_test,
-    )
     from assertions import (
         AssertionCheck,
         CheckResult,
@@ -92,6 +63,24 @@ except ImportError:
         HumanReviewReceipt,
         ReviewDecision,
     )
+
+from frozen_benchmark import (
+    BenchmarkCase,
+    BenchmarkResult,
+    BenchmarkSuite,
+    FrozenBenchmark,
+    MetricType,
+    ScoringCriteria,
+    STANDARD_BENCHMARK_SUITE,
+)
+from hidden_tests import (
+    HiddenTest,
+    HiddenTestSuite,
+    TestResult,
+    TestType,
+    TestVisibility,
+    create_hidden_test,
+)
 
 
 @dataclass
@@ -887,14 +876,14 @@ class CriticEngineV2:
             score.human_review_details = human_review_results
 
         # P2-a: 重新计算 overall (5 部分加权)
-        score.overall = round(
+        score.overall = max(0.0, min(1.0, round(
             score.benchmark_score * self.config.benchmark_weight +
             score.hidden_test_score * self.config.hidden_test_weight +
             score.assertion_score * self.config.assertion_weight +
             score.regression_score * self.config.regression_weight +
             score.human_review_score * self.config.human_review_weight,
             4
-        )
+        )))
 
         # 5. 存储结果 (P2-a: 包含 regression 和 human review)
         self._results = {

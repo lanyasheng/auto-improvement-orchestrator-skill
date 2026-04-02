@@ -51,7 +51,7 @@ def _full_candidate(**overrides) -> dict:
 def _execution(modified: bool = False, diff: str = "", target_path: str = "", status: str = "success") -> dict:
     result = {"modified": modified, "diff": diff, "status": status}
     if target_path:
-        result["target_path"] = target_path
+        result["rollback_pointer"] = {"target_path": target_path, "backup_path": "", "method": "restore_backup_file"}
     return {"candidate_id": "cand-001", "result": result}
 
 

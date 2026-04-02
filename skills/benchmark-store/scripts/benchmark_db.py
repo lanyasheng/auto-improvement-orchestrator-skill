@@ -16,11 +16,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from loguru import logger
+import logging
 
-# 配置日志
-logger.remove()
-logger.add(sys.stderr, level="INFO", format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+logger = logging.getLogger(__name__)
 
 
 def parse_args():

@@ -14,11 +14,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from loguru import logger
+import logging
 
-# 配置日志
-logger.remove()
-logger.add(sys.stderr, level="INFO", format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -109,6 +107,7 @@ def plot_metric(history: list, metric: str, title: str, output_file: str):
     plt.xticks(rotation=45)
     
     # 添加趋势线
+    import numpy as np
     z = np.polyfit(range(len(values)), values, 1)
     p = np.poly1d(z)
     ax.plot(timestamps, p(range(len(values))), "r--", alpha=0.5, label=f"Trend (y={z[0]:.2f}x+{z[1]:.2f})")
@@ -272,8 +271,7 @@ def main():
     args = parse_args()
     
     if args.verbose:
-        logger.remove()
-        logger.add(sys.stderr, level="DEBUG", format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>")
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
     
     track_skill_progress(args.skill_path, args.output, args.plot)
 

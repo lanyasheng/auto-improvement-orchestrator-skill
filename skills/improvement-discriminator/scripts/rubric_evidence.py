@@ -13,14 +13,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
 
 from lib.common import KEEP_CATEGORIES, protected_target
 
-EVALUATION_STANDARDS_REF = str(
-    Path("$OPENCLAW_ROOT/skills/skill-evaluator/references/evaluation-standards.md")
-)
-DESIGN_DOC_REF = "/tmp/aio-critic-evaluator-design.md"
+EVALUATION_STANDARDS_REF = "(see benchmark-store/interfaces/evaluation-standards.md)"
+DESIGN_DOC_REF = "(internal design reference)"
 
 CATEGORY_TO_EVALUATOR_CATEGORY = {
     "docs": "process-type",

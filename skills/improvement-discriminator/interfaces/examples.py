@@ -3,12 +3,15 @@
 Critic Phase 2 - 使用示例
 
 展示如何使用 Frozen Benchmark 和 Hidden Tests 接口。
+
+DEPRECATED: This examples file references legacy CriticEngine (now CriticEngineV2).
+It is retained for reference only.
 """
 
 try:
     from interfaces import (
         CriticConfig,
-        CriticEngine,
+        CriticEngineV2 as CriticEngine,
         BenchmarkCase,
         BenchmarkSuite,
         ScoringCriteria,
@@ -20,19 +23,23 @@ try:
     )
 except ImportError:
     import sys
-    sys.path.insert(0, '$OPENCLAW_ROOT/skills/skill-evaluator')
-    from interfaces import (
-        CriticConfig,
-        CriticEngine,
-        BenchmarkCase,
-        BenchmarkSuite,
-        ScoringCriteria,
-        MetricType,
-        FrozenBenchmark,
-        HiddenTestSuite,
-        TestType,
-        create_hidden_test,
-    )
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    try:
+        from interfaces import (
+            CriticConfig,
+            CriticEngineV2 as CriticEngine,
+            BenchmarkCase,
+            BenchmarkSuite,
+            ScoringCriteria,
+            MetricType,
+            FrozenBenchmark,
+            HiddenTestSuite,
+            TestType,
+            create_hidden_test,
+        )
+    except ImportError:
+        pass  # Module may not be available in all environments
 
 
 def example_1_basic_usage():

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 # Add repo root to path so we can import lib.*
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from lib.common import (
     slugify,

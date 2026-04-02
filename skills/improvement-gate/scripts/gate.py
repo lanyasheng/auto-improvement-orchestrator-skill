@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
 
 from lib.common import (
     KEEP_CATEGORIES,
@@ -74,7 +74,7 @@ class CompileGate(GateLayer):
     def validate(self, candidate, execution=None):
         if not execution or not execution.get("result", {}).get("modified"):
             return {"passed": True, "details": "No file modified", "layer": self.name}
-        target = execution.get("result", {}).get("target_path", "")
+        target = execution.get("result", {}).get("rollback_pointer", {}).get("target_path", "")
         if target.endswith(".py"):
             import py_compile
 

@@ -18,20 +18,19 @@ Rollback Script — generic-skill lane 回滚工具
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 from datetime import datetime
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))  # repo root
+
+from lib.common import read_json, write_json
+
 
 # 默认根目录
-DEFAULT_ROOT = Path("$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill")
-
-
-def load_json(path: Path) -> dict:
-    """加载 JSON 文件"""
-    with open(path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+DEFAULT_ROOT = Path(os.environ.get("OPENCLAW_ROOT", os.path.expanduser("~/.openclaw"))) / "shared-context/intel/auto-improvement/generic-skill"
 
 
 def find_receipt(run_id: str, candidate_id: str) -> Path:
@@ -60,7 +59,7 @@ def rollback_from_receipt(receipt_path: Path, dry_run: bool = False) -> dict:
     返回:
         回滚结果字典
     """
-    receipt = load_json(receipt_path)
+    receipt = read_json(receipt_path)
     
     # 检查是否需要回滚
     decision = receipt.get("decision", "")
@@ -90,22 +89,22 @@ def rollback_from_receipt(receipt_path: Path, dry_run: bool = False) -> dict:
             "receipt_path": str(receipt_path)
         }
     
-    execution = load_json(Path(execution_path))
+    execution = read_json(Path(execution_path))
     
-    # 获取 backup 路径
-    backup_info = execution.get("backup", {})
-    backup_path = backup_info.get("backup_path")
-    rollback_pointer = backup_info.get("rollback_pointer")
-    
+    # 获取 rollback pointer from result
+    result = execution.get("result", {})
+    rollback_pointer = result.get("rollback_pointer", {})
+    backup_path = rollback_pointer.get("backup_path")
+
     if not backup_path:
         return {
             "status": "error",
             "reason": "No backup information found in execution artifact",
             "execution_path": execution_path
         }
-    
-    # 获取目标路径
-    target_path = execution.get("truth_anchor", {}).get("target_path")
+
+    # 获取目标路径 (truth_anchor is a string path, not a dict)
+    target_path = rollback_pointer.get("target_path")
     if not target_path:
         return {
             "status": "error",
