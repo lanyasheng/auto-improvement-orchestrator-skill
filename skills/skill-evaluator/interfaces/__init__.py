@@ -15,8 +15,7 @@ from .hidden_tests import (
     DictHiddenTestDataSource,
     FileHiddenTestDataSource,
 )
-from .critic_engine import CriticEngine, CriticConfig
-from .critic_engine_v2 import CriticEngineV2, CriticConfig as CriticConfigV2
+from .critic_engine_v2 import CriticEngineV2, CriticConfig
 from .external_regression import (
     ExternalRegressionHook,
     RegressionSuiteResult,
@@ -46,10 +45,8 @@ __all__ = [
     "DictHiddenTestDataSource",
     "FileHiddenTestDataSource",
     # Critic Engine
-    "CriticEngine",
-    "CriticConfig",
     "CriticEngineV2",
-    "CriticConfigV2",
+    "CriticConfig",
     # External Regression (P2-a)
     "ExternalRegressionHook",
     "RegressionSuiteResult",

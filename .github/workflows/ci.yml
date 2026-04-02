@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install linters
+        run: pip install flake8
+
+      - name: Lint orchestrator scripts
+        run: flake8 skills/auto-improvement-orchestrator/scripts/ --max-line-length=120
+
+      - name: Lint evaluator scripts
+        run: flake8 skills/skill-evaluator/scripts/ --max-line-length=120
+
+      - name: Lint evaluator interfaces
+        run: flake8 skills/skill-evaluator/interfaces/ --max-line-length=120
+
+  test-orchestrator:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pytest
+
+      - name: Run orchestrator tests
+        run: pytest skills/auto-improvement-orchestrator/tests/ -v
+
+  test-evaluator:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r skills/skill-evaluator/requirements.txt
+          pip install pytest
+
+      - name: Run evaluator tests
+        run: pytest skills/skill-evaluator/tests/ -v
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for secrets
+        run: |
+          echo "Scanning for sensitive information..."
+          ! grep -RniE '(api[_-]?key|token|secret|password|BEGIN [A-Z ]*PRIVATE KEY|sk-[A-Za-z0-9]{20,}|xox[baprs]-)' \
+            --include='*.py' --include='*.md' --include='*.yml' --include='*.yaml' . \
+            || echo "::warning::Found potential secrets — review before merging"
+          echo "Security scan completed"

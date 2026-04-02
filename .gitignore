@@ -44,6 +44,13 @@ Thumbs.db
 state/
 artifacts/
 
+# Generated reports (runtime output, not source)
+*-eval-*.md
+*-report.md
+TESTING_REPORT.md
+VALIDATION_REPORT.md
+reports/
+
 # Test/coverage
 .pytest_cache/
 .coverage

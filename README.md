@@ -26,19 +26,21 @@
 
 ```
 .
-├── README.md                      # 本文件
+├── README.md
+├── .github/workflows/ci.yml      # Monorepo CI (lint + test + security)
 ├── .gitignore
-├── skills/                        # Skills Hub
+├── skills/
 │   ├── auto-improvement-orchestrator/
 │   │   ├── SKILL.md
 │   │   ├── references/            # 架构文档、流程说明
-│   │   ├── scripts/               # 执行脚本
+│   │   ├── scripts/               # 执行脚本 (propose/critic/executor/gate/rollback)
+│   │   ├── tests/                 # 状态机测试
 │   │   └── docs/                  # 文档
 │   └── skill-evaluator/
 │       ├── SKILL.md
 │       ├── README.md              # Skill 详细说明
-│       ├── interfaces/            # 评估接口定义
-│       ├── scripts/               # 评估脚本
+│       ├── interfaces/            # 评估接口定义 (critic_engine_v2, frozen_benchmark, etc.)
+│       ├── scripts/               # 评估脚本 + human_review/ PR 集成
 │       ├── tests/                 # 测试套件
 │       ├── tests/fixtures/        # 测试用例
 │       ├── references/            # 评估标准、测试用例库

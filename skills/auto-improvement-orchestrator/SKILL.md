@@ -1,6 +1,10 @@
 ---
 name: auto-improvement-orchestrator
+version: 0.2.0
 description: Unified entry skill for structured self-improvement workflows across skills, macro, and workflows using a Proposer → Critic → Executor → Gate loop. Use when optimizing a skill or workflow, generating improvement candidates, running critic/evaluator review, applying low-risk iterative improvements, or managing rollback/gate decisions for auto-improvement tasks.
+author: OpenClaw Team
+license: MIT
+tags: [orchestrator, self-improvement, proposer, critic, executor, gate, automation]
 ---
 
 # Auto-Improvement Orchestrator
@@ -123,37 +127,12 @@ python scripts/rollback.py --receipt <receipt.json> --execute
 
 ## 约束
 
-- 当前仅 `generic-skill` lane 可运行(Phase 1)
-- `skill-evaluator` / `macro` / `browser-workflow` 仍是规划(Phase 2/3)
+- 当前仅 `generic-skill` lane 可运行
 - 仅自动执行低风险文档类修改(docs/reference/guardrail)
 - 默认保守 gate,优先可回退
 
 ---
 
-## 仍在规划中的部分(Phase 2/3)
+## 路线图
 
-以下仍是**规划中**,不是当前版本能力:
-
-### Phase 2(下一步)
-- `skill-evaluator` full adapter(真实调用 CLI / benchmark / hidden tests)
-- frozen benchmark / hidden tests / external regression
-- human spot-check interface
-
-### Phase 3(远期)
-- `macro` lane 真正自动执行
-- `browser-workflow` lane 真正自动执行
-- 复杂 prompt / workflow / tests / code 级自动修改
-- 控制面主动调度与多 run 并发仲裁
-
-详见 `references/phases.md` 和 `references/skill-evaluator-adapter.md`。
-
----
-
-## 下一步
-
-**P1（Phase 2）**: 升级 Critic 从 rubric-assisted 到 full evaluator runtime
-- 真实调用 `skill-evaluator` CLI
-- 运行 frozen benchmark / hidden tests
-- 接入 external regression callback
-
-详见 `references/phases.md` 和 `references/skill-evaluator-adapter.md`。
+Phase 2/3 规划详见 `references/phases.md`。
