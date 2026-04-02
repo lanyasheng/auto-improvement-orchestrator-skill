@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-DEFAULT_STATE_ROOT = Path("/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill")
+DEFAULT_STATE_ROOT = Path("$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill")
 SCHEMA_VERSION = "1.0"
 KEEP_CATEGORIES = {"docs", "reference", "guardrail"}
 EXECUTOR_SUPPORTED_CATEGORIES = {"docs", "reference", "guardrail"}

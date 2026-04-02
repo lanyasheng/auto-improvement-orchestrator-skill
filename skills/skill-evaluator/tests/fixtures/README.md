@@ -52,6 +52,6 @@ assert level == "Level 3"
 ## 运行测试
 
 ```bash
-cd /Users/study/.openclaw/skills/skill-evaluator
+cd $OPENCLAW_ROOT/skills/skill-evaluator
 pytest tests/test_evaluator.py -v --cov=scripts --cov-report=term-missing
 ```

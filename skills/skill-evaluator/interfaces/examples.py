@@ -20,7 +20,7 @@ try:
     )
 except ImportError:
     import sys
-    sys.path.insert(0, '/Users/study/.openclaw/skills/skill-evaluator')
+    sys.path.insert(0, '$OPENCLAW_ROOT/skills/skill-evaluator')
     from interfaces import (
         CriticConfig,
         CriticEngine,

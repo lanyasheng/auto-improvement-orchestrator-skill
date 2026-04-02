@@ -15,7 +15,7 @@ from typing import Any
 from lane_common import KEEP_CATEGORIES, protected_target
 
 EVALUATION_STANDARDS_REF = str(
-    Path("/Users/study/.openclaw/skills/skill-evaluator/references/evaluation-standards.md")
+    Path("$OPENCLAW_ROOT/skills/skill-evaluator/references/evaluation-standards.md")
 )
 DESIGN_DOC_REF = "/tmp/aio-critic-evaluator-design.md"
 

@@ -21,7 +21,7 @@ Proposer → Critic → Executor → Gate
 
 **目标**: 对 `newsletter-creation-curation` skill 进行自动改进
 
-**输入来源**: 用户反馈文件 `/Users/study/.openclaw/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md`
+**输入来源**: 用户反馈文件 `$OPENCLAW_ROOT/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md`
 
 **反馈内容摘要**:
 - 缺少行业特定模板
@@ -36,13 +36,13 @@ Proposer → Critic → Executor → Gate
 
 ```bash
 python scripts/propose_candidate.py \
-  --target /Users/study/.openclaw/workspace/skills/newsletter-creation-curation \
-  --source /Users/study/.openclaw/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md
+  --target $OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation \
+  --source $OPENCLAW_ROOT/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md
 ```
 
 ### 输入
 
-**目标路径**: `/Users/study/.openclaw/workspace/skills/newsletter-creation-curation`
+**目标路径**: `$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation`
 
 **反馈来源**:
 ```markdown
@@ -61,7 +61,7 @@ python scripts/propose_candidate.py \
 
 ### 输出（Candidate Artifact）
 
-**路径**: `/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json`
+**路径**: `$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json`
 
 **内容示例**:
 ```json
@@ -73,14 +73,14 @@ python scripts/propose_candidate.py \
   "next_step": "critic",
   "next_owner": "run_critic.py",
   "truth_anchor": {
-    "target_path": "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation",
-    "source_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md"
+    "target_path": "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation",
+    "source_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/demo-feedback/newsletter-creation-curation-demo.feedback.md"
   },
   "candidates": [
     {
       "id": "cand-001",
       "title": "添加行业特定模板章节",
-      "target_path": "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation/SKILL.md",
+      "target_path": "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation/SKILL.md",
       "category": "reference",
       "rationale": "用户反馈缺少行业模板，补充后可提升技能实用性",
       "risk_level": "low",
@@ -92,7 +92,7 @@ python scripts/propose_candidate.py \
     {
       "id": "cand-002",
       "title": "补充自动化工作流集成",
-      "target_path": "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation/references/workflows.md",
+      "target_path": "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation/references/workflows.md",
       "category": "reference",
       "rationale": "用户需要 Zapier/Make/n8n 集成示例",
       "risk_level": "low",
@@ -103,7 +103,7 @@ python scripts/propose_candidate.py \
     {
       "id": "cand-003",
       "title": "添加发布频率建议",
-      "target_path": "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation/SKILL.md",
+      "target_path": "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation/SKILL.md",
       "category": "docs",
       "rationale": "用户需要 cadence 建议",
       "risk_level": "low",
@@ -124,7 +124,7 @@ python scripts/propose_candidate.py \
 
 ```bash
 python scripts/run_critic.py \
-  --input /Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json \
+  --input $OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json \
   --use-evaluator-evidence
 ```
 
@@ -134,7 +134,7 @@ python scripts/run_critic.py \
 
 ### 输出（Ranking Artifact）
 
-**路径**: `/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json`
+**路径**: `$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json`
 
 **内容示例**:
 ```json
@@ -219,7 +219,7 @@ python scripts/run_critic.py \
 
 ```bash
 python scripts/run_executor.py \
-  --input /Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json \
+  --input $OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json \
   --candidate-id cand-001
 ```
 
@@ -229,7 +229,7 @@ python scripts/run_executor.py \
 
 ### 输出（Execution Artifact）
 
-**路径**: `/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json`
+**路径**: `$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json`
 
 **内容示例**:
 ```json
@@ -242,8 +242,8 @@ python scripts/run_executor.py \
   "next_step": "gate",
   "next_owner": "apply_gate.py",
   "truth_anchor": {
-    "target_path": "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation/SKILL.md",
-    "ranking_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json"
+    "target_path": "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation/SKILL.md",
+    "ranking_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json"
   },
   "execution_result": {
     "action": "append_markdown_section",
@@ -255,11 +255,11 @@ python scripts/run_executor.py \
   "diff_summary": {
     "unified_diff": "@@ -45,6 +45,31 @@\n ...\n+## 行业模板示例\n+\n+### 科技行业\n+...\n+### 金融行业\n+...\n+### 教育行业\n+...",
     "files_modified": [
-      "/Users/study/.openclaw/workspace/skills/newsletter-creation-curation/SKILL.md"
+      "$OPENCLAW_ROOT/workspace/skills/newsletter-creation-curation/SKILL.md"
     ]
   },
   "backup": {
-    "backup_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/backups/run-20260401-143022/SKILL.md.bak",
+    "backup_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/backups/run-20260401-143022/SKILL.md.bak",
     "rollback_pointer": "backup-run-20260401-143022-cand-001"
   }
 }
@@ -273,8 +273,8 @@ python scripts/run_executor.py \
 
 ```bash
 python scripts/apply_gate.py \
-  --ranking /Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json \
-  --execution /Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json
+  --ranking $OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json \
+  --execution $OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json
 ```
 
 ### 输入
@@ -283,7 +283,7 @@ python scripts/apply_gate.py \
 
 ### 输出（Gate Receipt）
 
-**路径**: `/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/receipts/run-20260401-143022-cand-001-gate.json`
+**路径**: `$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/receipts/run-20260401-143022-cand-001-gate.json`
 
 **内容示例（keep 决策）**:
 ```json
@@ -296,16 +296,16 @@ python scripts/apply_gate.py \
   "decision": "keep",
   "reasoning": "低风险文档类修改，执行成功，符合 auto-keep 条件",
   "truth_anchor": {
-    "ranking_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json",
-    "execution_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json"
+    "ranking_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json",
+    "execution_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json"
   },
   "next_step": "none",
   "next_owner": "user_or_control_plane",
   "artifact_paths": {
-    "candidate": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json",
-    "ranking": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json",
-    "execution": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json",
-    "receipt": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/receipts/run-20260401-143022-cand-001-gate.json"
+    "candidate": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/candidate_versions/run-20260401-143022.json",
+    "ranking": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/rankings/run-20260401-143022.json",
+    "execution": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/run-20260401-143022-cand-001.json",
+    "receipt": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/receipts/run-20260401-143022-cand-001-gate.json"
   }
 }
 ```
@@ -343,7 +343,7 @@ python scripts/apply_gate.py \
 {
   "decision": "pending_promote",
   "reasoning": "Critic 推荐 hold，值得保留但需要更强 judge 或人工确认",
-  "pending_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/state/pending_promote.json"
+  "pending_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/state/pending_promote.json"
 }
 ```
 
@@ -364,7 +364,7 @@ python scripts/apply_gate.py \
 {
   "decision": "reject",
   "reasoning": "收益不足，风险过高",
-  "veto_path": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/state/veto.json"
+  "veto_path": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/state/veto.json"
 }
 ```
 
@@ -386,7 +386,7 @@ python scripts/apply_gate.py \
   "decision": "revert",
   "reasoning": "Critic 拒绝但已修改文件，执行回滚",
   "rollback_used": true,
-  "backup_restored": "/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/executions/backups/run-20260401-143022/SKILL.md.bak"
+  "backup_restored": "$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/executions/backups/run-20260401-143022/SKILL.md.bak"
 }
 ```
 
@@ -434,7 +434,7 @@ python scripts/apply_gate.py \
 ## 完整文件树（执行后）
 
 ```
-/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/
+$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/
 ├── candidate_versions/
 │   └── run-20260401-143022.json
 ├── rankings/

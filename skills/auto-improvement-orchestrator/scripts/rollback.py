@@ -25,7 +25,7 @@ from datetime import datetime
 
 
 # 默认根目录
-DEFAULT_ROOT = Path("/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill")
+DEFAULT_ROOT = Path("$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill")
 
 
 def load_json(path: Path) -> dict:

@@ -183,6 +183,6 @@ auto-improvement-orchestrator-skill/
 
 ---
 
-**报告路径**: `/Users/study/.openclaw/repos/auto-improvement-orchestrator-skill/docs/release-readiness-2026-04-02.md`
+**报告路径**: `$OPENCLAW_ROOT/repos/auto-improvement-orchestrator-skill/docs/release-readiness-2026-04-02.md`
 
 **验证时间**: 2026-04-02 08:36 GMT+8

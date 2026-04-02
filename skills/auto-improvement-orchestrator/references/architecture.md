@@ -22,7 +22,7 @@ Proposer -> Critic -> Executor -> Gate
 `generic-skill` lane 的 artifact 根目录：
 
 ```text
-/Users/study/.openclaw/shared-context/intel/auto-improvement/generic-skill/
+$OPENCLAW_ROOT/shared-context/intel/auto-improvement/generic-skill/
 ├── candidate_versions/   # proposer 输出
 ├── rankings/             # critic 输出
 ├── executions/           # executor 输出 + backups/
