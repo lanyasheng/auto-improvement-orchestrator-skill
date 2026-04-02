@@ -199,7 +199,11 @@ def main() -> int:
             print(f"\n✓ Updated state: APPROVED")
             # Post confirmation comment
             post_comment(args.repo, args.pr_number, f"✓ Human review approved by @{decision_signal.actor}\n\nDecision source: {decision_signal.source}\nRun: `{args.run_id}` | Candidate: `{args.candidate_id}`")
-            add_label(args.repo, args.pr_number, "approved")
+            # Add label (best effort, may fail due to GitHub API deprecation)
+            try:
+                add_label(args.repo, args.pr_number, "approved")
+            except RuntimeError as e:
+                print(f"  Note: Could not add label (GitHub API issue): {e}")
             # Remove pending-review label if exists
             try:
                 remove_label(args.repo, args.pr_number, "pending-review")
@@ -209,7 +213,10 @@ def main() -> int:
             manager.reject(args.run_id, args.candidate_id, decision_source=decision_signal.source, reviewer=decision_signal.actor)
             print(f"\n✗ Updated state: REJECTED")
             post_comment(args.repo, args.pr_number, f"✗ Human review rejected by @{decision_signal.actor}\n\nDecision source: {decision_signal.source}\nRun: `{args.run_id}` | Candidate: `{args.candidate_id}`")
-            add_label(args.repo, args.pr_number, "rejected")
+            try:
+                add_label(args.repo, args.pr_number, "rejected")
+            except RuntimeError as e:
+                print(f"  Note: Could not add label (GitHub API issue): {e}")
             try:
                 remove_label(args.repo, args.pr_number, "pending-review")
             except:
