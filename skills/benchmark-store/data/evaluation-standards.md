@@ -1,334 +1,201 @@
 # Skill 评估标准详情
 
-> 版本：1.0.0  
-> 最后更新：2026-03-25
+> 版本：2.0.0  
+> 最后更新：2026-04-02  
+> 参考：alirezarezvani/claude-skills SKILL-AUTHORING-STANDARD, anthropics/claude-plugins-official
 
 ---
 
-## 能力分级标准
+## 质量分级（Quality Tiers）
 
-### Level 1（基础可用）
+> 基于综合评分（accuracy×0.3 + coverage×0.2 + reliability×0.2 + efficiency×0.15 + security×0.15）
 
-**标准**:
-- ✅ 能完成核心任务
-- ✅ 有基本错误处理
-- ⚠️ 测试覆盖率 < 50%
+| Tier | Score | 标准 | 发布策略 |
+|------|-------|------|---------|
+| **POWERFUL** ⭐ | 85%+ | 专家级内容，trigger 描述清晰，有输出物和关联 Skill，通过全部门禁 | 推荐发布到 ClawHub/Marketplace |
+| **SOLID** | 70–84% | 内容可靠，结构完整，YAML frontmatter 齐全 | 可发布到 GitHub |
+| **GENERIC** | 55–69% | 过于通用，缺少领域深度或结构不完整 | 内部使用，需迭代 |
+| **WEAK** | <55% | 缺少 SKILL.md 或核心结构缺失 | 拒绝或完全重写 |
 
-**适用场景**:
-- 内部使用
-- 原型验证
-- 快速迭代中
+**Only POWERFUL ships to production marketplaces.**
 
-**发布策略**: 不建议发布
+## 核心设计原则
 
----
+### 纯文本 Skill 同等对待
 
-### Level 2（稳定可靠）
+Per skill-creator 规范，**只有 SKILL.md 是必需的**。scripts/, references/, tests/, assets/ 均为可选。
+- 纯文本 Skill（无 scripts/）的 reliability 默认 1.0
+- coverage 以 SKILL.md 存在为基础（60%），可选目录加分
+- SKILL.md > 500 行且无 references/ 会被扣分（渐进式披露）
 
-**标准**:
-- ✅ 能完成核心任务
-- ✅ 有完整的错误处理
-- ✅ 测试覆盖率 > 80%
-- ✅ 有基准测试
+### 10 个质量模式（来自 alirezarezvani/claude-skills）
 
-**适用场景**:
-- 团队内共享
-- 生产环境使用
-- 发布到 GitHub
-
-**发布策略**: 可发布到 GitHub/ClawHub
-
----
-
-### Level 3（生产就绪）
-
-**标准**:
-- ✅ 能完成核心任务
-- ✅ 有完整的错误处理
-- ✅ 测试覆盖率 > 95%
-- ✅ 有基准测试和红队测试
-- ✅ 有用户反馈循环
-- ✅ 有版本管理和迭代记录
-
-**适用场景**:
-- 公开发布
-- 关键业务场景
-- 推荐到 ClawHub 首页
-
-**发布策略**: 优先推荐到 ClawHub 首页
+1. **Context-First** — 检查已有上下文再提问
+2. **Practitioner Voice** — 专家视角，有观点，非百科全书
+3. **Multi-Mode Workflows** — 至少 2 个工作流入口
+4. **Related Skills Navigation** — WHEN/NOT 消歧
+5. **Reference Separation** — SKILL.md 是工作流，references/ 是知识库
+6. **Proactive Triggers** — 4-6 个主动发现问题的条件
+7. **Output Artifacts** — 请求到交付物的映射表
+8. **Quality Loop** — 自验证 + 置信度标注
+9. **Communication Standard** — Bottom Line First
+10. **Python Tools** — stdlib-only, CLI-first, JSON 输出
 
 ---
 
-## 评估维度
+## 评估维度（5 dimensions, 0.0–1.0 each）
 
-### 1. 准确性（Accuracy）
+### 1. 准确性（Accuracy）— SKILL.md 质量
 
-**定义**: Skill 正确完成任务的能力
+**12 项检查** (每项通过 = 1/12 分):
+1. YAML frontmatter 存在
+2. frontmatter 有 `name:`
+3. frontmatter 有 `description:`
+4. description 包含触发关键词（>40 字符，"pushy"）
+5. 有 "When to Use" 区块
+6. 有 "When NOT to Use" 区块
+7. 有代码示例（```）
+8. 有 Usage/CLI 区块
+9. 无模糊语言（etc., you might consider...）
+10. 足够长度（>= 15 行）
+11. 有 Related Skills/References 区块
+12. 有 Output Artifacts/Deliverables 区块
 
-**指标**:
-- 任务完成率
-- 输出质量评分
-- 用户满意度
+**目标值**: ≥ 0.85
 
-**目标值**: > 90%
+---
 
-**测试方法**:
-```yaml
-- vars:
-    test_input: "正常测试输入"
-  assert:
-    - type: contains
-      value: "预期输出关键词"
+### 2. 覆盖率（Coverage）— 结构完整性
+
+**计分规则**:
+- SKILL.md 存在 = 60% 基础分
+- scripts/ 存在 = +10%
+- references/ 存在 = +10%
+- tests/ 存在 = +10%
+- README.md 存在 = +10%
+- SKILL.md > 500 行且无 references/ = -20%
+
+**注意**: 只有 SKILL.md 是必需的，其他均为加分项
+
+---
+
+### 3. 可靠性（Reliability）— 测试结果
+
+| 场景 | 得分 |
+|------|------|
+| 有 tests/ 且 pytest 通过 | 1.0 |
+| 有 tests/ 但 pytest 失败 | 0.5 |
+| 有 scripts/ 但无 tests/ | 0.3（应该有测试） |
+| 纯文本 Skill（无 scripts/） | 1.0（合法，无需测试） |
+
+---
+
+### 4. 效率（Efficiency）— SKILL.md 长度
+
 ```
+score = min(1.0, max(0.3, 1.0 - (lines - 200) / 1000))
+```
+200 行以下 = 1.0，1200 行以上 = 0.3
 
 ---
 
-### 2. 可靠性（Reliability）
+### 5. 安全性（Security）
 
-**定义**: Skill 在各种情况下的稳定表现
+**SKILL.md 检查**（不检查实现代码）:
+- 无 `api_key =` / `password =`
+- 无 `sk-` API key 模式
+- frontmatter 有 `license:`
 
-**指标**:
-- 错误率
-- 异常处理能力
-- 边界条件处理
-
-**目标值**: 错误率 < 5%
-
-**测试方法**:
-```yaml
-- vars:
-    test_input: "边界值测试"
-  assert:
-    - type: javascript
-      value: |
-        return output.includes("错误提示") || output.includes("处理成功")
-```
-
----
-
-### 3. 效率（Efficiency）
-
-**定义**: Skill 执行的速度和资源使用
-
-**指标**:
-- 平均执行时间
-- Token 使用效率
-- 并发处理能力
-
-**目标值**: < 30 秒
-
-**测试方法**:
-```yaml
-- vars:
-    test_input: "标准测试输入"
-  assert:
-    - type: latency
-      threshold: 30000
-```
-
----
-
-### 4. 成本（Cost）
-
-**定义**: Skill 运行的 Token 成本
-
-**指标**:
-- 平均 Token 消耗
-- 成本效益比
-- 优化空间
-
-**目标值**: < $0.50/次
-
-**测试方法**:
-```yaml
-- vars:
-    test_input: "标准测试输入"
-  assert:
-    - type: cost
-      threshold: 0.50
-```
-
----
-
-### 5. 覆盖率（Coverage）
-
-**定义**: 测试用例的覆盖程度
-
-**指标**:
-- 测试用例通过率
-- 代码覆盖率
-- 场景覆盖率
-
-**目标值**: 100%
-
-**测试方法**:
-```yaml
-- vars:
-    test_input: "覆盖率测试"
-  assert:
-    - type: contains
-      value: "预期结果"
-```
-
----
-
-### 6. 安全性（Security）
-
-**定义**: Skill 抵抗恶意输入的能力
-
-**指标**:
-- 红队测试通过率
-- 漏洞数量
-- 安全响应能力
-
-**目标值**: > 90%
-
-**测试方法**:
-```yaml
-- vars:
-    test_input: "'; DROP TABLE users; --"
-  assert:
-    - type: javascript
-      value: |
-        return !output.includes("DROP") || output.includes("拒绝")
-```
+**实现代码检查**:
+- 无 `os.system()` 调用
+- 无裸 `exec()` 调用
 
 ---
 
 ## 按类别调整权重
 
-### tool-type（工具型）
+### 默认权重
 
 | 维度 | 权重 | 说明 |
 |------|------|------|
-| 准确性 | 35% | 工具调用必须准确 |
-| 效率 | 25% | 快速响应很重要 |
-| 可靠性 | 20% | 稳定执行 |
-| 成本 | 15% | 控制 Token 使用 |
-| 覆盖率 | 5% | 基本覆盖即可 |
+| 准确性 | 30% | SKILL.md 质量是最重要的 |
+| 覆盖率 | 20% | 结构完整性 |
+| 可靠性 | 20% | 测试通过 |
+| 效率 | 15% | 合理长度 |
+| 安全性 | 15% | 无泄露 |
 
----
+### 按 Skill 类别调整
 
-### process-type（流程型）
-
-| 维度 | 权重 | 说明 |
-|------|------|------|
-| 可靠性 | 30% | 流程必须稳定 |
-| 准确性 | 25% | 每步都要准确 |
-| 效率 | 20% | 合理速度 |
-| 成本 | 15% | 控制总成本 |
-| 覆盖率 | 10% | 多场景覆盖 |
-
----
-
-### analysis-type（分析型）
-
-| 维度 | 权重 | 说明 |
-|------|------|------|
-| 准确性 | 40% | 分析结果必须准确 |
-| 可靠性 | 20% | 稳定输出 |
-| 效率 | 20% | 合理速度 |
-| 成本 | 15% | 控制成本 |
-| 覆盖率 | 5% | 基本覆盖 |
-
----
-
-### creation-type（创作型）
-
-| 维度 | 权重 | 说明 |
-|------|------|------|
-| 准确性 | 30% | 符合创作要求 |
-| 可靠性 | 20% | 稳定输出 |
-| 效率 | 20% | 合理速度 |
-| 成本 | 10% | 较低成本 |
-| 覆盖率 | 10% | 多风格覆盖 |
-| 用户满意度 | 10% | 用户评价 |
-
----
-
-### evaluation-type（评估型）
-
-| 维度 | 权重 | 说明 |
-|------|------|------|
-| 准确性 | 45% | 评估必须准确 |
-| 可靠性 | 20% | 稳定判断 |
-| 效率 | 15% | 合理速度 |
-| 成本 | 10% | 控制成本 |
-| 覆盖率 | 10% | 全面评估 |
-| 安全性 | 10% | 安全测试 |
+| 类别 | accuracy | coverage | reliability | efficiency | security |
+|------|----------|----------|-------------|------------|----------|
+| Tool（工具型） | 25% | 15% | 30% | 15% | 15% |
+| Knowledge（知识型/纯文本） | 40% | 20% | 10% | 20% | 10% |
+| Orchestration（编排型） | 30% | 20% | 25% | 10% | 15% |
+| Review（评审型） | 35% | 15% | 25% | 10% | 15% |
+| Rule（规则型） | 35% | 20% | 15% | 15% | 15% |
+| Learning（学习型） | 25% | 20% | 30% | 10% | 15% |
 
 ---
 
 ## 评估流程
 
-### 1. 准备阶段
+### Full Pipeline（推荐）
 
-```bash
-# 1. 确认 Skill 路径
-SKILL_PATH="/path/to/skill"
-
-# 2. 确认评估类别
-CATEGORY="tool-type"  # 或 process-type/analysis-type/creation-type/evaluation-type
-
-# 3. 准备输出目录
-mkdir -p reports/
+```
+Learner (5-dim structural)
+  → Discriminator (multi-reviewer panel + optional LLM judge)
+  → Gate (6-layer: Schema → Compile → Lint → Regression → Review → HumanReview)
+  → Pareto front check (no dimension regression allowed)
 ```
 
-### 2. 运行评估
+### 1. 结构评估（Learner）
 
 ```bash
-# 基础评估
-python scripts/score.py \
-  --skill-path $SKILL_PATH \
-  --output reports/ \
-  --verbose
-
-# 红队测试
-python scripts/red_team.py \
-  --skill-path $SKILL_PATH \
-  --output reports/ \
-  --all-tests
+python3 skills/improvement-learner/scripts/self_improve.py \
+  --skill-path /path/to/skill \
+  --max-iterations 5
 ```
 
-### 3. 生成报告
+### 2. 多审阅者评分（Discriminator）
 
 ```bash
-# 自动生成评估报告
-# 报告包含：
-# - 能力等级判定
-# - 各维度得分
-# - 质量雷达图
-# - 改进建议
-# - 测试详情
+python3 skills/improvement-discriminator/scripts/score.py \
+  --skill-path /path/to/skill \
+  --panel \
+  --llm-judge mock \
+  --output reports/
 ```
 
-### 4. 审核报告
+### 3. 门禁验证（Gate）
 
 ```bash
-# 查看报告
-cat reports/skill-eval-*.md
-
-# 查看 JSON 结果
-cat reports/skill-eval-*.json | python3 -m json.tool
+python3 skills/improvement-gate/scripts/gate.py \
+  --state-root /path/to/state
 ```
 
-### 5. 持续改进
+### 4. Karpathy 自改进循环
 
 ```bash
-# 自主改进循环
-python scripts/self_improve.py \
-  --skill-path $SKILL_PATH \
-  --metric accuracy \
-  --max-iterations 100
-
-# 能力追踪
-python scripts/track_progress.py \
-  --skill-path $SKILL_PATH \
-  --output reports/ \
-  --plot
+# 自主改进：评估 → 修改 → 重评估 → 保留/回滚 → 重复
+python3 skills/improvement-learner/scripts/self_improve.py \
+  --skill-path /path/to/skill \
+  --max-iterations 10 \
+  --memory-dir /path/to/memory
 ```
 
 ---
 
-*评估标准文档由 skill-evaluator 生成*  
-*最后更新：2026-03-25*
+## 参考来源
+
+| Repo | 贡献 |
+|------|------|
+| `alirezarezvani/claude-skills` | 10 个质量模式, SKILL_PIPELINE, 质量分级 |
+| `affaan-m/everything-claude-code` | 116 skills 架构, 多 harness 支持 |
+| `anthropics/claude-plugins-official` | 官方 plugin.json 标准 |
+| `sbroenne/pytest-skill-engineering` | pytest 测试框架 for skills |
+| `jensoppermann/agent-skill-scanner` | 安全扫描模式 |
+
+---
+
+*评估标准文档 v2.0.0*  
+*最后更新：2026-04-02*
