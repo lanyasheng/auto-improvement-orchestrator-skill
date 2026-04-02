@@ -135,7 +135,11 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "good-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
-            "---\nname: test\n---\n\n# Good Skill\n", encoding="utf-8"
+            "---\nname: test\nversion: 0.1.0\ndescription: A good skill\n"
+            "author: Team\nlicense: MIT\ntags: [test]\n---\n\n# Good Skill\n\n"
+            "## When to Use\n- Testing\n\n## When NOT to Use\n- Production\n\n"
+            "## CLI\n\n```bash\npython3 run.py\n```\n",
+            encoding="utf-8",
         )
         (skill / "README.md").write_text("# README\n", encoding="utf-8")
         (skill / "scripts").mkdir()
@@ -148,24 +152,24 @@ class TestEvaluateSkillDimensions:
 
         scores = evaluate_skill_dimensions(skill)
         assert scores["coverage"] == 1.0  # all 5 items present
-        assert scores["accuracy"] == 0.8  # has frontmatter
-        assert scores["security"] == 0.8  # no secrets
+        assert scores["accuracy"] == 1.0  # all accuracy checks pass
+        assert scores["security"] >= 0.8  # no secrets
 
     def test_skill_md_without_frontmatter(self, tmp_path):
         skill = tmp_path / "nofm-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text("# No Frontmatter\n", encoding="utf-8")
         scores = evaluate_skill_dimensions(skill)
-        assert scores["accuracy"] == 0.4  # no frontmatter
+        assert scores["accuracy"] < 0.5  # no frontmatter → low accuracy
 
     def test_security_score_drops_with_secrets(self, tmp_path):
         skill = tmp_path / "secret-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
-            "---\nname: test\n---\n\npassword = hunter2\n", encoding="utf-8"
+            "---\nname: test\n---\n\nmy api_key = abc123\n", encoding="utf-8"
         )
         scores = evaluate_skill_dimensions(skill)
-        assert scores["security"] == 0.3
+        assert scores["security"] < 0.8  # api_key found → lower security
 
     def test_returns_all_dimensions(self, tmp_path):
         skill = tmp_path / "dim-skill"
@@ -256,12 +260,14 @@ class TestApplyImprovement:
         content = (skill / "SKILL.md").read_text(encoding="utf-8")
         assert content.startswith("---")
 
-    def test_accuracy_no_op_with_existing_frontmatter(self, tmp_path):
+    def test_accuracy_adds_missing_sections(self, tmp_path):
         skill = tmp_path / "skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text("---\nname: x\n---\n# Has FM\n", encoding="utf-8")
         result = apply_improvement(skill, {"type": "accuracy"})
-        assert result is False  # nothing to do
+        assert result is True  # adds missing sections (When to Use, CLI, etc.)
+        content = (skill / "SKILL.md").read_text(encoding="utf-8")
+        assert "## When to Use" in content
 
     def test_unknown_type_returns_false(self, tmp_path):
         skill = tmp_path / "skill"

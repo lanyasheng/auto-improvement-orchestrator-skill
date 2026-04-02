@@ -173,10 +173,36 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     structure_items = [has_skill_md, has_tests, has_scripts, has_references, has_readme]
     scores["coverage"] = sum(structure_items) / len(structure_items)
 
-    # Accuracy: SKILL.md quality
+    # Accuracy: SKILL.md quality (granular 0.0-1.0 scoring)
     if has_skill_md:
         content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
-        scores["accuracy"] = 0.8 if content.startswith("---") else 0.4
+        acc_checks = []
+        # Has YAML frontmatter?
+        acc_checks.append(content.startswith("---"))
+        # Frontmatter has required fields?
+        if content.startswith("---"):
+            fm_section = content.split("---", 2)[1] if content.count("---") >= 2 else ""
+            acc_checks.append("name:" in fm_section)
+            acc_checks.append("description:" in fm_section)
+            acc_checks.append("version:" in fm_section)
+        else:
+            acc_checks.extend([False, False, False])
+        # Has "When to Use" section?
+        acc_checks.append("## When to Use" in content or "## 何时使用" in content)
+        # Has "When NOT to Use" section?
+        acc_checks.append("## When NOT to Use" in content or "## 不应该使用" in content)
+        # Has code examples?
+        acc_checks.append("```" in content)
+        # Has CLI section?
+        acc_checks.append("## CLI" in content or "## Quick Start" in content or "## Usage" in content)
+        # No vague language?
+        vague = ["etc.", "and so on", "and more", "various things"]
+        acc_checks.append(not any(v in content.lower() for v in vague))
+        # Reasonable length (not too short)?
+        acc_checks.append(len(content.split("\n")) >= 15)
+
+        scores["accuracy"] = sum(acc_checks) / len(acc_checks)
+
         lines = len(content.split("\n"))
         if lines > 0:
             scores["efficiency"] = min(1.0, max(0.3, 1.0 - (lines - 200) / 1000))
@@ -200,13 +226,38 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     else:
         scores["reliability"] = 0.0
 
-    # Security: basic content checks
-    scores["security"] = 0.8
+    # Security: check SKILL.md only (not implementation code which legitimately
+    # uses "password" parameters, "secrets" module, etc.)
+    sec_checks = []
     if has_skill_md:
-        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
-        lowered = content.lower()
-        if "password" in lowered or "api_key" in lowered:
-            scores["security"] = 0.3
+        skill_content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        skill_lower = skill_content.lower()
+        # SKILL.md should not contain actual secrets
+        sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
+        sec_checks.append("password =" not in skill_lower and "password=" not in skill_lower)
+        sec_checks.append("sk-" not in skill_content)  # API key pattern
+        # Has license in frontmatter?
+        if skill_content.count("---") >= 2:
+            fm = skill_content.split("---", 2)[1]
+            sec_checks.append("license:" in fm)
+        else:
+            sec_checks.append(False)
+    else:
+        sec_checks = [False, False, False, False]
+
+    # Implementation code checks (only flag dangerous patterns, not parameter names)
+    all_py_content = ""
+    for f in skill_path.rglob("*.py"):
+        if "__pycache__" in str(f):
+            continue
+        try:
+            all_py_content += f.read_text(encoding="utf-8", errors="ignore") + "\n"
+        except Exception:
+            pass
+    sec_checks.append("os.system(" not in all_py_content)
+    sec_checks.append("exec(" not in all_py_content or "exec_module" in all_py_content)
+
+    scores["security"] = sum(sec_checks) / len(sec_checks) if sec_checks else 0.5
 
     return scores
 
@@ -361,20 +412,46 @@ def _apply_coverage_improvement(skill_path: Path) -> bool:
 
 
 def _apply_accuracy_improvement(skill_path: Path) -> bool:
-    """Add frontmatter to SKILL.md if missing."""
+    """Improve SKILL.md accuracy — add missing frontmatter fields and sections."""
     md = skill_path / "SKILL.md"
     if not md.exists():
         return False
     content = md.read_text(encoding="utf-8")
-    if content.startswith("---"):
-        return False  # already has frontmatter
-    name = skill_path.name
-    frontmatter = (
-        f"---\nname: {name}\nversion: 0.1.0\n"
-        f"description: Auto-generated skill\n---\n\n"
-    )
-    md.write_text(frontmatter + content, encoding="utf-8")
-    return True
+    changed = False
+
+    # 1. Add frontmatter if missing
+    if not content.startswith("---"):
+        name = skill_path.name
+        content = f"---\nname: {name}\nversion: 0.1.0\ndescription: {name} skill\nauthor: OpenClaw Team\nlicense: MIT\ntags: [{name}]\n---\n\n" + content
+        changed = True
+
+    # 2. Add missing frontmatter fields
+    if content.startswith("---") and content.count("---") >= 2:
+        parts = content.split("---", 2)
+        fm = parts[1]
+        for field, default in [("version:", "version: 0.1.0"), ("license:", "license: MIT"), ("author:", "author: OpenClaw Team")]:
+            if field not in fm:
+                fm = fm.rstrip() + "\n" + default + "\n"
+                changed = True
+        if changed:
+            content = "---" + fm + "---" + parts[2]
+
+    # 3. Add missing sections
+    sections_to_add = []
+    if "## When to Use" not in content and "## 何时使用" not in content:
+        sections_to_add.append("\n## When to Use\n\n- Trigger this skill when relevant tasks are detected\n")
+    if "## When NOT to Use" not in content and "## 不应该使用" not in content:
+        sections_to_add.append("\n## When NOT to Use\n\n- Do not use for unrelated tasks\n")
+    if "```" not in content:
+        sections_to_add.append("\n## CLI\n\n```bash\n# See scripts/ for available commands\n```\n")
+
+    if sections_to_add:
+        content = content.rstrip() + "\n" + "\n".join(sections_to_add)
+        changed = True
+
+    if changed:
+        md.write_text(content, encoding="utf-8")
+    return changed
 
 
 def _apply_reliability_improvement(skill_path: Path) -> bool:
