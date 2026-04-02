@@ -1,74 +1,116 @@
-# Improvement Skills Monorepo
+# Auto-Improvement Skills
 
-**提升/测评类 Skills 统一仓库**
+A 7-skill pipeline for autonomous skill improvement. An AI agent evaluates a target skill, generates improvement candidates, scores them through multi-reviewer consensus, applies changes through a gated executor, and learns from outcomes via a 3-layer memory system backed by Pareto front tracking.
 
-本仓库是一个 monorepo，包含多个专注于技能提升和测评的 OpenClaw skills。
+## Architecture
+
+```
+  Orchestrator ──► Generator ──► Discriminator ──► Executor ──► Gate
+       │               ▲              │                           │
+       │               │              ▼                           ▼
+       │            Learner ◄── Benchmark-Store ◄─────────── (keep/revert)
+       │               │
+       └───── retry with failure trace
+```
+
+**Pipeline flow**: The orchestrator dispatches a run. The generator proposes improvement candidates (docs, references, guardrails). The discriminator scores each candidate through a multi-reviewer blind panel. The executor applies the top candidate and captures an execution trace. The gate validates the result through 5 layers (schema, compile, lint, regression, review). The learner records outcomes in 3-layer memory and drives self-improvement loops with Pareto front regression detection.
 
 ## Skills
 
-### 1. auto-improvement-orchestrator
+| Skill | Role | Description |
+|-------|------|-------------|
+| `improvement-orchestrator` | Coordinator | State machine + retry loop; dispatches generate/score/execute/gate pipeline |
+| `improvement-generator` | Generator | Proposes improvement candidates; adjusts priority from prior failure traces |
+| `improvement-discriminator` | Discriminator | Multi-reviewer blind panel with configurable weights and risk sensitivity |
+| `improvement-executor` | Executor | Applies candidate changes; captures structured execution traces |
+| `improvement-gate` | Gate | 5-layer validation (schema, compile, lint, regression, review) with keep/revert decisions |
+| `benchmark-store` | Data | Pareto front tracking with persistence; regression detection within tolerance |
+| `improvement-learner` | Learner | 3-layer memory (hot/warm/cold), skill dimension evaluation, self-improvement loop |
 
-**统一入口 skill**: 协调 Proposer / Critic / Executor / Gate 四角色，对 skill / macro / workflow 等对象进行自动化改进。
+## Shared Library
 
-- **路径**: `skills/auto-improvement-orchestrator/`
-- **触发条件**: "自动改进", "优化 skill", "运行 critic", "回滚" 等
-- **核心流程**: Proposer → Critic → Executor → Gate
+`lib/` contains code extracted from the original monolith:
 
-### 2. skill-evaluator
+- `common.py` -- shared utilities (timestamps, slugify, classification)
+- `state_machine.py` -- improvement pipeline state machine (stages, transitions, persistence)
 
-**Skill 评估与提升专家**: 提供基准测试、红队测试和自主改进循环（Karpathy Loop）。
-
-- **路径**: `skills/skill-evaluator/`
-- **触发条件**: 新 Skill 质量评估、回归测试、能力对比、ClawHub 发布前认证
-- **核心流程**: Skill 分析 → 基准测试 → 红队测试 → 生成报告 → 持续改进
-
-## 目录结构
+## Directory Structure
 
 ```
 .
-├── README.md
-├── .github/workflows/ci.yml      # Monorepo CI (lint + test + security)
-├── .gitignore
+├── lib/                          # Shared library
+│   ├── common.py
+│   └── state_machine.py
 ├── skills/
-│   ├── auto-improvement-orchestrator/
+│   ├── improvement-orchestrator/ # Pipeline coordinator
 │   │   ├── SKILL.md
-│   │   ├── references/            # 架构文档、流程说明
-│   │   ├── scripts/               # 执行脚本 (propose/critic/executor/gate/rollback)
-│   │   ├── tests/                 # 状态机测试
-│   │   └── docs/                  # 文档
-│   └── skill-evaluator/
+│   │   ├── scripts/
+│   │   └── tests/
+│   ├── improvement-generator/    # Candidate proposer
+│   │   ├── SKILL.md
+│   │   ├── scripts/
+│   │   └── tests/
+│   ├── improvement-discriminator/# Multi-reviewer scorer
+│   │   ├── SKILL.md
+│   │   ├── interfaces/
+│   │   ├── scripts/
+│   │   └── tests/
+│   ├── improvement-executor/     # Change applier
+│   │   ├── SKILL.md
+│   │   ├── scripts/
+│   │   └── tests/
+│   ├── improvement-gate/         # 5-layer validator
+│   │   ├── SKILL.md
+│   │   ├── scripts/
+│   │   └── tests/
+│   ├── benchmark-store/          # Pareto front tracking
+│   │   ├── SKILL.md
+│   │   ├── scripts/
+│   │   └── tests/
+│   └── improvement-learner/      # Memory + self-improvement
 │       ├── SKILL.md
-│       ├── README.md              # Skill 详细说明
-│       ├── interfaces/            # 评估接口定义 (critic_engine_v2, frozen_benchmark, etc.)
-│       ├── scripts/               # 评估脚本 + human_review/ PR 集成
-│       ├── tests/                 # 测试套件
-│       ├── tests/fixtures/        # 测试用例
-│       ├── references/            # 评估标准、测试用例库
-│       └── market-research/       # 市场调研
-└── ...
+│       ├── scripts/
+│       └── tests/
+├── .github/workflows/ci.yml     # CI: lint + test + security
+└── pyproject.toml
 ```
 
-## 使用方式
-
-每个 skill 都是独立的 OpenClaw skill，通过各自的 `SKILL.md` 触发。
-
-### 安装到 OpenClaw
+## Quick Start
 
 ```bash
-# 克隆本仓库到本地
-git clone https://github.com/lanyasheng/auto-improvement-orchestrator-skill.git
-
-# 创建软链接到 OpenClaw skills 目录
-ln -s $(pwd)/skills/auto-improvement-orchestrator ~/.openclaw/skills/auto-improvement-orchestrator
-ln -s $(pwd)/skills/skill-evaluator ~/.openclaw/skills/skill-evaluator
+git clone <repo-url>
+cd auto-improvement-skill
+pip install pytest
+python -m pytest skills/ -v
 ```
 
-## 开发规范
+## Development
 
-- 每个 skill 保持独立边界（SKILL.md / references / scripts / tests）
-- 共享工具/接口可放在 `skills/shared/`（待规划）
-- 不要将 benchmark 数据、hidden tests 直接提交到 skill 包
-- 清理 `__pycache__`、`.venv`、临时报告等 runtime artifacts
+### Run all tests
+
+```bash
+python -m pytest skills/ -v --tb=short
+```
+
+### Run tests for a single skill
+
+```bash
+python -m pytest skills/improvement-gate/tests/ -v
+```
+
+### Add a new skill
+
+1. Create `skills/<name>/` with `SKILL.md`, `scripts/`, `tests/`
+2. Add the skill to the lint loop in `.github/workflows/ci.yml`
+3. Import shared code from `lib/` as needed
+
+### Verify no mock remnants
+
+```bash
+grep -rn "random\.uniform\|\"score\": 0.85" skills/*/scripts/*.py
+```
+
+This should return no results. All scores flow through real evaluator functions.
 
 ## License
 
