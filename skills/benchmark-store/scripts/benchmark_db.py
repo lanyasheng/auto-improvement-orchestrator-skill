@@ -108,49 +108,63 @@ def add_benchmark(db_path: str, category: str, test_name: str, input: str, expec
         conn.close()
 
 
-def compare_with_benchmark(db_path: str, skill_path: str, category: str):
-    """与基准对比"""
+def compare_with_benchmark(db_path: str, skill_path: str, category: str, evaluator=None):
+    """与基准对比
+
+    Args:
+        db_path: 数据库路径
+        skill_path: Skill 路径
+        category: Skill 类别
+        evaluator: 评估函数，签名 (test_name, test_input, expected_output, metrics) -> dict
+                   必须返回 {"passed": bool, "score": float}。
+                   如果为 None，将引发 ValueError 而不是返回伪造分数。
+    """
+    if evaluator is None:
+        raise ValueError(
+            "evaluator is required: pass a callable(test_name, test_input, expected_output, metrics) -> "
+            "{'passed': bool, 'score': float}. Refusing to return a hardcoded mock score."
+        )
+
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
+
     # 获取该类别的基准测试
     cursor.execute('SELECT id, test_name, input, expected_output, metrics FROM benchmarks WHERE category = ?', (category,))
     benchmarks = cursor.fetchall()
-    
+
     if not benchmarks:
         logger.warning(f"未找到类别 {category} 的基准测试")
         conn.close()
-        return
-    
+        return None
+
     logger.info(f"找到 {len(benchmarks)} 个基准测试用例")
-    
-    # 运行评估（实际应该调用 evaluate.py）
-    # 这里只是示例
+
     results = []
     for benchmark_id, test_name, test_input, expected_output, metrics in benchmarks:
-        # 模拟评估
-        result = {
+        result = evaluator(test_name, test_input, expected_output, metrics)
+        if not isinstance(result, dict) or "score" not in result:
+            raise TypeError(f"evaluator must return a dict with 'score' key, got {type(result)}")
+        results.append({
             "test_name": test_name,
-            "passed": True,  # 实际应该运行测试
-            "score": 0.85,  # 实际应该计算得分
-        }
-        results.append(result)
-    
+            "passed": result.get("passed", False),
+            "score": result["score"],
+        })
+
     # 计算总体得分
     overall_score = sum(r["score"] for r in results) / len(results) if results else 0
-    
+
     # 保存评估结果
     cursor.execute('''
         INSERT INTO eval_results (skill_path, benchmark_id, category, overall_score, evaluated_at)
         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
     ''', (skill_path, benchmarks[0][0], category, overall_score))
-    
+
     conn.commit()
     conn.close()
-    
+
     logger.info(f"评估完成：{skill_path}")
     logger.info(f"总体得分：{overall_score:.2%}")
-    
+
     return overall_score
 
 
@@ -293,8 +307,9 @@ def main():
         if not args.skill_path or not args.category:
             logger.error("对比基准需要提供 --skill-path, --category")
             sys.exit(1)
-        
-        compare_with_benchmark(args.db_path, args.skill_path, args.category)
+
+        logger.error("CLI compare requires an evaluator — use the Python API with a callable evaluator argument.")
+        sys.exit(1)
     
     elif args.action == "leaderboard":
         if not args.category:
