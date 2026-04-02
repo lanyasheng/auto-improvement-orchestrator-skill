@@ -18,6 +18,11 @@ See `references/` for architecture, adapters, guardrails, and phase roadmap.
 - Run the Proposer→Discriminator→Gate→Executor pipeline
 - Retry failed improvements with trace-aware feedback
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## Pipeline
 ```text
 propose → discriminate → gate → execute → learn
