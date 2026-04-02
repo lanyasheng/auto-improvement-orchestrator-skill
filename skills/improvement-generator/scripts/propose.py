@@ -20,6 +20,7 @@ from lib.common import (
     load_source_paths,
     normalize_target,
     protected_target,
+    read_json,
     slugify,
     utc_now_iso,
     write_json,
@@ -41,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-root", default=str(DEFAULT_STATE_ROOT))
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--output", default=None)
+    parser.add_argument("--trace", default=None, help="Path to a failure trace JSON from a previous run")
     return parser.parse_args()
 
 
@@ -205,6 +207,37 @@ def build_workflow_candidate(target: Path, feedback_buckets: dict[str, list[str]
     }
 
 
+def load_failure_trace(trace_path: Path | None) -> dict | None:
+    """Load a failure trace from a previous run."""
+    if not trace_path or not trace_path.exists():
+        return None
+    return read_json(trace_path)
+
+
+def adjust_candidates_from_trace(candidates: list, trace: dict) -> list:
+    """Adjust candidate priorities based on failure trace."""
+    failed_id = trace.get("candidate_id", "")
+    failed_category = ""
+    # Extract category from candidate_id (e.g., "cand-01-docs" -> "docs")
+    parts = failed_id.split("-")
+    if len(parts) >= 3:
+        failed_category = parts[-1]
+
+    adjusted = []
+    for c in candidates:
+        if c["category"] == failed_category:
+            # Deprioritize the same category that failed
+            c["rationale"] = (
+                f"[Retry] Previous {failed_category} attempt failed: "
+                f"{trace.get('reason', 'unknown')}. {c['rationale']}"
+            )
+            # Move to end
+            adjusted.append(c)
+        else:
+            adjusted.insert(0, c)  # Boost alternatives
+    return adjusted
+
+
 def generate_candidates(target: Path, feedback_entries: list[dict], max_candidates: int) -> list[dict]:
     feedback_buckets = classify_feedback(feedback_entries)
     builders = [
@@ -264,8 +297,15 @@ def main() -> int:
     for source in source_paths:
         source_entries.extend(expand_source(source))
 
+    trace_path = Path(args.trace).expanduser().resolve() if args.trace else None
+    failure_trace = load_failure_trace(trace_path)
+
     target_profile = compute_target_profile(target)
     candidates = generate_candidates(target, source_entries, args.max_candidates)
+
+    if failure_trace:
+        candidates = adjust_candidates_from_trace(candidates, failure_trace)
+
     for candidate in candidates:
         candidate["lane"] = args.lane
         candidate["protected_target"] = protected_target(candidate["target_path"])
@@ -286,6 +326,7 @@ def main() -> int:
         "next_step": "rank_candidates",
         "next_owner": "critic",
         "truth_anchor": str(output_path),
+        "failure_trace_used": failure_trace is not None,
     }
     write_json(output_path, artifact)
     update_state(

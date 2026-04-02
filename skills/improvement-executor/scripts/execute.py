@@ -27,6 +27,22 @@ from lib.state_machine import (
 )
 
 
+def capture_execution_trace(candidate: dict, result: dict, error: str | None = None) -> dict:
+    """Capture structured execution trace for GEPA feedback."""
+    return {
+        "type": "execution_trace",
+        "candidate_id": candidate.get("id", "unknown"),
+        "category": candidate.get("category", "unknown"),
+        "target_path": candidate.get("target_path", ""),
+        "action": candidate.get("execution_plan", {}).get("action", "unknown"),
+        "execution_status": result.get("status", "unknown"),
+        "modified": result.get("modified", False),
+        "diff_summary": result.get("diff_summary", {}),
+        "error": error,
+        "timestamp": utc_now_iso(),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Execute a ranked generic-skill candidate")
     parser.add_argument("--input", required=True, help="Ranking artifact JSON")
@@ -176,6 +192,9 @@ def main() -> int:
             "reason": f"action `{action}` is not supported",
         }
 
+    error_msg = None if result["status"] == "success" else result.get("reason")
+    execution_trace = capture_execution_trace(candidate, result, error=error_msg)
+
     output_path = Path(args.output).expanduser().resolve() if args.output else paths["executions"] / f"{run_id}-{candidate['id']}.json"
     execution_artifact = {
         "schema_version": SCHEMA_VERSION,
@@ -196,6 +215,7 @@ def main() -> int:
                 "target_path": str(target_file),
             },
         },
+        "execution_trace": execution_trace,
         "next_step": "apply_gate",
         "next_owner": "gate",
         "truth_anchor": str(output_path),
