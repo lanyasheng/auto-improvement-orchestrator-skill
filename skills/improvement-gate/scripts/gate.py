@@ -131,7 +131,7 @@ class RegressionGate(GateLayer):
 
 
 class ReviewGate(GateLayer):
-    """Layer 4: Check discriminator panel consensus."""
+    """Layer 4: Check discriminator panel consensus + LLM judge verdict."""
 
     def __init__(self):
         super().__init__("review", required=True)
@@ -140,17 +140,106 @@ class ReviewGate(GateLayer):
         recommendation = candidate.get("recommendation", "hold")
         panel = candidate.get("panel_result", {})
         label = panel.get("cognitive_label", "")
+        llm_verdict = candidate.get("llm_verdict", {})
+        llm_decision = llm_verdict.get("decision", "")
+        llm_confidence = llm_verdict.get("confidence", 0.0)
+
+        # LLM judge hard reject
+        if llm_decision == "reject":
+            return {"passed": False, "details": "LLM judge: reject", "layer": self.name}
+
+        # DISPUTED + LLM reject = definite fail (redundant guard)
+        if label == "DISPUTED" and llm_decision == "reject":
+            return {"passed": False, "details": "Panel disputed + LLM judge reject", "layer": self.name}
 
         if recommendation == "reject":
             return {"passed": False, "details": "Recommendation: reject", "layer": self.name}
         if label == "DISPUTED":
             return {"passed": False, "details": "Panel disputed — needs human review", "layer": self.name}
+
+        # LLM conditional with high confidence: warn but pass
+        if llm_decision == "conditional" and llm_confidence > 0.7:
+            if recommendation == "accept_for_execution":
+                return {
+                    "passed": True,
+                    "details": f"Accepted [{label}] (LLM conditional, confidence={llm_confidence:.2f})",
+                    "layer": self.name,
+                }
+
         if recommendation == "accept_for_execution":
             return {"passed": True, "details": f"Accepted [{label}]", "layer": self.name}
         return {"passed": False, "details": f"Recommendation: {recommendation}", "layer": self.name}
 
 
-DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate()]
+class HumanReviewGate(GateLayer):
+    """Layer 5 (optional): Request human review for non-trivial changes.
+
+    When a candidate reaches this layer, it means all mechanical gates passed
+    but the change is too risky for auto-keep. This layer:
+    1. Creates a review request (writes a review receipt JSON)
+    2. Returns pending=True so the orchestrator knows to wait
+    3. Can be checked later for completion
+    """
+
+    def __init__(self):
+        super().__init__("human_review", required=False)  # Advisory — doesn't block, but signals
+
+    def validate(self, candidate, execution=None):
+        # Check if this candidate needs human review
+        category = candidate.get("category", "")
+        risk = candidate.get("risk_level", "low")
+        recommendation = candidate.get("recommendation", "")
+
+        needs_review = (
+            risk in ("medium", "high")
+            or category in ("prompt", "workflow", "tests", "code")
+            or recommendation == "hold"
+        )
+
+        if not needs_review:
+            return {"passed": True, "details": "Auto-keep eligible", "layer": self.name, "needs_human": False}
+
+        # Create a review request
+        review_request = self._create_review_request(candidate, execution)
+        return {
+            "passed": True,  # Don't block — but signal that human review is needed
+            "details": f"Human review requested: {review_request['request_id']}",
+            "layer": self.name,
+            "needs_human": True,
+            "review_request": review_request,
+        }
+
+    def _create_review_request(self, candidate, execution=None):
+        """Create a structured review request."""
+        return {
+            "request_id": f"review-{candidate.get('id', 'unknown')}",
+            "candidate_id": candidate.get("id", ""),
+            "category": candidate.get("category", ""),
+            "risk_level": candidate.get("risk_level", ""),
+            "title": candidate.get("title", ""),
+            "description": candidate.get("proposed_change_summary", ""),
+            "diff": execution.get("result", {}).get("diff", "") if execution else "",
+            "status": "pending",
+            "requested_at": None,  # Will be set by caller with utc_now_iso()
+        }
+
+    def check_review_status(self, review_request_path: Path) -> dict:
+        """Check if a pending review has been completed."""
+        if not review_request_path.exists():
+            return {"completed": False, "reason": "request_not_found"}
+
+        data = read_json(review_request_path)
+        if data.get("status") == "completed":
+            return {
+                "completed": True,
+                "decision": data.get("decision", "pending"),
+                "reviewer": data.get("reviewer", "unknown"),
+                "comments": data.get("comments", ""),
+            }
+        return {"completed": False, "reason": "still_pending"}
+
+
+DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate(), HumanReviewGate()]
 
 
 def run_gate_layers(
@@ -194,7 +283,7 @@ def parse_args() -> argparse.Namespace:
         "--layers",
         default=None,
         help="Comma-separated list of layer names to run (default: all). "
-        "Available: schema,compile,lint,regression,review",
+        "Available: schema,compile,lint,regression,review,human_review",
     )
     return parser.parse_args()
 
@@ -242,6 +331,14 @@ def _layer_failure_detail(verdict: dict) -> str:
         if not r["passed"]:
             return r["details"]
     return "unknown"
+
+
+def _extract_human_review_signal(verdict: dict) -> dict | None:
+    """If any layer returned needs_human=True, return the review request."""
+    for r in verdict["layer_results"]:
+        if r.get("needs_human"):
+            return r.get("review_request")
+    return None
 
 
 def main() -> int:
@@ -308,6 +405,16 @@ def main() -> int:
             rollback_outcome = maybe_restore(execution_artifact)
             reason = "candidate is not auto-keep eligible in first runnable version; escalated to pending_promote"
 
+    # --- Human review escalation ---
+    # If mechanical gates passed but human review layer flagged needs_human,
+    # escalate keep → pending_promote so a human can approve.
+    human_review_request = _extract_human_review_signal(layer_verdict) if layer_verdict["all_passed"] else None
+    if human_review_request and decision == "keep":
+        decision = "pending_promote"
+        human_review_request["requested_at"] = utc_now_iso()
+        reason = f"human review requested ({human_review_request['request_id']}); escalated from keep to pending_promote"
+        rollback_outcome = maybe_restore(execution_artifact)
+
     # Attach category/target_path for receipt even when layers failed early
     category = candidate.get("category")
     target_path = candidate.get("target_path")
@@ -332,21 +439,28 @@ def main() -> int:
         "next_owner": "proposer" if decision == "keep" else "human" if decision == "pending_promote" else "proposer",
         "truth_anchor": str(output_path),
     }
+    if human_review_request:
+        receipt["human_review_request"] = human_review_request
     write_json(output_path, receipt)
 
     if decision == "pending_promote":
-        append_pending_promote(
-            state_root,
-            {
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "category": category,
-                "target_path": target_path,
-                "recommendation": recommendation,
-                "receipt_path": str(output_path),
-                "created_at": utc_now_iso(),
-            },
-        )
+        pending_entry = {
+            "run_id": run_id,
+            "candidate_id": candidate_id,
+            "category": category,
+            "target_path": target_path,
+            "recommendation": recommendation,
+            "receipt_path": str(output_path),
+            "created_at": utc_now_iso(),
+        }
+        if human_review_request:
+            pending_entry["human_review_request"] = human_review_request
+            # Also write the review request to its own file for the review CLI
+            review_dir = state_root / "state" / "reviews"
+            review_dir.mkdir(parents=True, exist_ok=True)
+            review_path = review_dir / f"{human_review_request['request_id']}.json"
+            write_json(review_path, human_review_request)
+        append_pending_promote(state_root, pending_entry)
     elif decision in {"reject", "revert"}:
         append_veto(
             state_root,
