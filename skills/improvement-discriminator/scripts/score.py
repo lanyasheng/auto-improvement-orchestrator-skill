@@ -8,6 +8,7 @@ rubric/category/boundary evidence in addition to the original heuristic.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -17,6 +18,11 @@ if str(_REPO_ROOT) not in sys.path:
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
+
+# LLM Judge — import from sibling interfaces/ package
+_INTERFACES_DIR = str(Path(__file__).resolve().parents[1] / "interfaces")
+if _INTERFACES_DIR not in sys.path:
+    sys.path.insert(0, _INTERFACES_DIR)
 
 from rubric_evidence import build_evaluator_evidence
 from lib.common import (
@@ -32,6 +38,9 @@ from lib.state_machine import (
     ensure_tree,
     update_state,
 )
+from llm_judge import LLMJudge, JudgeConfig, JudgeVerdict
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CATEGORY_WEIGHTS = {
     "docs": 4.0,
@@ -45,6 +54,15 @@ CATEGORY_BONUS = DEFAULT_CATEGORY_WEIGHTS  # backward compat alias
 RISK_PENALTY = {"low": 0.0, "medium": 2.0, "high": 4.5}
 HEURISTIC_WEIGHT = 0.7
 EVALUATOR_WEIGHT = 0.3
+
+# Blended weight schemes when LLM judge is enabled
+# heuristic + llm only
+HEURISTIC_WEIGHT_WITH_LLM = 0.6
+LLM_WEIGHT_WITHOUT_EVALUATOR = 0.4
+# heuristic + llm + evaluator (all three)
+HEURISTIC_WEIGHT_ALL_THREE = 0.5
+LLM_WEIGHT_ALL_THREE = 0.3
+EVALUATOR_WEIGHT_ALL_THREE = 0.2
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +128,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable multi-reviewer blind panel scoring (Phase 2A).",
     )
+    parser.add_argument(
+        "--llm-judge",
+        choices=["claude", "openai", "mock"],
+        default=None,
+        dest="llm_judge",
+        help="Enable LLM-as-Judge evaluation. Backend: claude, openai, or mock.",
+    )
     return parser.parse_args()
 
 
@@ -128,7 +153,12 @@ def heuristic_score(candidate: dict) -> tuple[float, float]:
     return score, round(risk_penalty, 2)
 
 
-def build_blockers(candidate: dict, *, evidence: dict | None = None) -> list[str]:
+def build_blockers(
+    candidate: dict,
+    *,
+    evidence: dict | None = None,
+    llm_verdict: JudgeVerdict | None = None,
+) -> list[str]:
     blockers: list[str] = []
     category = candidate.get("category", "unknown")
     risk_level = candidate.get("risk_level", "medium")
@@ -149,6 +179,9 @@ def build_blockers(candidate: dict, *, evidence: dict | None = None) -> list[str
             blockers.append("skill_level_insufficient_for_structural_change")
         if evaluator_verdict == "reject":
             blockers.append("evaluator_reject")
+
+    if llm_verdict and llm_verdict.decision == "reject":
+        blockers.append("llm_judge_reject")
     return blockers
 
 
@@ -198,17 +231,66 @@ def build_judge_notes(candidate: dict, recommendation: str, blockers: list[str],
     return judge_notes
 
 
-def score_candidate(candidate: dict, *, use_evaluator_evidence: bool = False) -> dict:
+def score_candidate(
+    candidate: dict,
+    *,
+    use_evaluator_evidence: bool = False,
+    llm_judge: LLMJudge | None = None,
+    target_content: str = "",
+) -> dict:
     heuristic, risk_penalty = heuristic_score(candidate)
     evidence = build_evaluator_evidence(candidate) if use_evaluator_evidence else None
     evaluator_score = evidence.get("overall_score_10") if evidence else None
-    final_score = heuristic
-    if evaluator_score is not None:
-        final_score = round((heuristic * HEURISTIC_WEIGHT) + (evaluator_score * EVALUATOR_WEIGHT), 2)
 
-    blockers = build_blockers(candidate, evidence=evidence)
+    # --- LLM Judge evaluation ---
+    llm_verdict: JudgeVerdict | None = None
+    if llm_judge is not None:
+        try:
+            llm_verdict = llm_judge.evaluate(candidate, target_content=target_content)
+        except Exception as exc:
+            logger.warning("LLM judge evaluation failed: %s", exc)
+
+    # --- Blended scoring ---
+    llm_score_10 = llm_verdict.score * 10.0 if llm_verdict else None
+
+    if evaluator_score is not None and llm_score_10 is not None:
+        # All three sources
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT_ALL_THREE
+            + llm_score_10 * LLM_WEIGHT_ALL_THREE
+            + evaluator_score * EVALUATOR_WEIGHT_ALL_THREE,
+            2,
+        )
+    elif llm_score_10 is not None:
+        # Heuristic + LLM only
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT_WITH_LLM
+            + llm_score_10 * LLM_WEIGHT_WITHOUT_EVALUATOR,
+            2,
+        )
+    elif evaluator_score is not None:
+        # Heuristic + evaluator only (original path)
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT
+            + evaluator_score * EVALUATOR_WEIGHT,
+            2,
+        )
+    else:
+        final_score = heuristic
+
+    blockers = build_blockers(candidate, evidence=evidence, llm_verdict=llm_verdict)
     recommendation = build_recommendation(candidate, final_score, blockers, evidence=evidence)
     judge_notes = build_judge_notes(candidate, recommendation, blockers, evidence=evidence)
+
+    # Determine adapter name
+    if llm_judge and use_evaluator_evidence:
+        adapter_name = "heuristic+evaluator+llm-judge"
+    elif llm_judge:
+        adapter_name = "heuristic+llm-judge"
+    elif use_evaluator_evidence:
+        adapter_name = "heuristic+evaluator-phase1"
+    else:
+        adapter_name = "rule-based-heuristic-v1"
 
     payload = {
         **candidate,
@@ -219,21 +301,42 @@ def score_candidate(candidate: dict, *, use_evaluator_evidence: bool = False) ->
         "blockers": blockers,
         "judge_notes": judge_notes,
         "judge_adapter": {
-            "name": "heuristic+evaluator-phase1" if use_evaluator_evidence else "rule-based-heuristic-v1",
+            "name": adapter_name,
             "future_replacement": "full-skill-evaluator-adapter",
             "evaluated_at": utc_now_iso(),
             "evaluator_evidence_enabled": use_evaluator_evidence,
+            "llm_judge_enabled": llm_judge is not None,
         },
     }
     if evidence:
         payload["score_components"] = {
-            "heuristic_weight": HEURISTIC_WEIGHT,
-            "evaluator_weight": EVALUATOR_WEIGHT,
+            "heuristic_weight": HEURISTIC_WEIGHT if llm_judge is None else HEURISTIC_WEIGHT_ALL_THREE,
+            "evaluator_weight": EVALUATOR_WEIGHT if llm_judge is None else EVALUATOR_WEIGHT_ALL_THREE,
             "heuristic_score": heuristic,
             "evaluator_score": evaluator_score,
         }
+        if llm_score_10 is not None:
+            payload["score_components"]["llm_weight"] = LLM_WEIGHT_ALL_THREE
+            payload["score_components"]["llm_score"] = llm_score_10
         payload["evaluator_score"] = evaluator_score
         payload["evaluator_evidence"] = evidence
+    elif llm_score_10 is not None:
+        payload["score_components"] = {
+            "heuristic_weight": HEURISTIC_WEIGHT_WITH_LLM,
+            "llm_weight": LLM_WEIGHT_WITHOUT_EVALUATOR,
+            "heuristic_score": heuristic,
+            "llm_score": llm_score_10,
+        }
+
+    if llm_verdict is not None:
+        payload["llm_verdict"] = {
+            "score": llm_verdict.score,
+            "decision": llm_verdict.decision,
+            "reasoning": llm_verdict.reasoning,
+            "dimensions": llm_verdict.dimensions,
+            "confidence": llm_verdict.confidence,
+            "suggestions": llm_verdict.suggestions,
+        }
     return payload
 
 
@@ -360,6 +463,21 @@ def main() -> int:
     target_path = candidate_artifact["target"]["path"]
     raw_candidates = candidate_artifact.get("candidates", [])
 
+    # --- LLM Judge setup ---
+    llm_judge_instance: LLMJudge | None = None
+    if args.llm_judge:
+        llm_judge_instance = LLMJudge(JudgeConfig(backend=args.llm_judge))
+
+    # --- Read target skill content for LLM context ---
+    target_content = ""
+    if llm_judge_instance:
+        skill_md = Path(target_path).parent / "SKILL.md"
+        if skill_md.exists():
+            try:
+                target_content = skill_md.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.warning("Could not read target SKILL.md: %s", exc)
+
     if args.panel:
         # Multi-reviewer panel mode (Phase 2A)
         panel_results = []
@@ -374,7 +492,15 @@ def main() -> int:
         ranked_candidates = sorted(panel_results, key=lambda item: item["score"], reverse=True)
     else:
         ranked_candidates = sorted(
-            [score_candidate(candidate, use_evaluator_evidence=args.use_evaluator_evidence) for candidate in raw_candidates],
+            [
+                score_candidate(
+                    candidate,
+                    use_evaluator_evidence=args.use_evaluator_evidence,
+                    llm_judge=llm_judge_instance,
+                    target_content=target_content,
+                )
+                for candidate in raw_candidates
+            ],
             key=lambda item: item["score"],
             reverse=True,
         )
@@ -389,13 +515,21 @@ def main() -> int:
         "created_at": utc_now_iso(),
         "source_candidate_artifact": args.input,
         "target": candidate_artifact["target"],
-        "critic_mode": "multi-reviewer-panel" if args.panel else ("heuristic+evaluator-phase1" if args.use_evaluator_evidence else "heuristic-only"),
+        "critic_mode": (
+            "multi-reviewer-panel" if args.panel
+            else "heuristic+evaluator+llm-judge" if args.use_evaluator_evidence and args.llm_judge
+            else "heuristic+llm-judge" if args.llm_judge
+            else "heuristic+evaluator-phase1" if args.use_evaluator_evidence
+            else "heuristic-only"
+        ),
         "scored_candidates": ranked_candidates,
         "summary": {
             "accept_for_execution": sum(1 for item in ranked_candidates if item["recommendation"] == "accept_for_execution"),
             "hold": sum(1 for item in ranked_candidates if item["recommendation"] == "hold"),
             "reject": sum(1 for item in ranked_candidates if item["recommendation"] == "reject"),
             "evaluator_evidence_enabled": args.use_evaluator_evidence,
+            "llm_judge_enabled": args.llm_judge is not None,
+            "llm_judge_backend": args.llm_judge,
         },
         "next_step": "execute_candidate",
         "next_owner": "executor",

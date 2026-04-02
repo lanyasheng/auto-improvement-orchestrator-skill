@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the 5-layer mechanical gate validation system."""
+"""Tests for the 6-layer mechanical gate validation system (including human review)."""
 
 from __future__ import annotations
 
@@ -20,12 +20,14 @@ _spec.loader.exec_module(_gate)
 
 CompileGate = _gate.CompileGate
 GateLayer = _gate.GateLayer
+HumanReviewGate = _gate.HumanReviewGate
 LintGate = _gate.LintGate
 RegressionGate = _gate.RegressionGate
 ReviewGate = _gate.ReviewGate
 SchemaGate = _gate.SchemaGate
 run_gate_layers = _gate.run_gate_layers
 select_layers = _gate.select_layers
+_extract_human_review_signal = _gate._extract_human_review_signal
 
 
 # ---------------------------------------------------------------------------
@@ -258,8 +260,8 @@ class TestRunGateLayers:
         verdict = run_gate_layers(candidate, _execution())
         assert verdict["all_passed"] is True
         assert verdict["failed_at"] is None
-        assert verdict["layers_run"] == 5
-        assert verdict["layers_total"] == 5
+        assert verdict["layers_run"] == 6
+        assert verdict["layers_total"] == 6
 
     def test_first_required_failure_stops(self):
         # Schema fails (missing fields) -> stops immediately
@@ -313,7 +315,7 @@ class TestRunGateLayers:
 class TestSelectLayers:
     def test_none_returns_all(self):
         layers = select_layers(None)
-        assert len(layers) == 5
+        assert len(layers) == 6
 
     def test_single_layer(self):
         layers = select_layers("schema")
@@ -402,3 +404,200 @@ class TestGateLayerBase:
     def test_optional_layer(self):
         layer = GateLayer("test", required=False)
         assert layer.required is False
+
+
+# ===================================================================
+# Layer 5 — HumanReviewGate
+# ===================================================================
+
+
+class TestHumanReviewGate:
+    def test_low_risk_docs_no_review_needed(self):
+        """Low risk docs category should not need human review."""
+        candidate = _full_candidate(category="docs", risk_level="low")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["passed"] is True
+        assert result["needs_human"] is False
+        assert "Auto-keep" in result["details"]
+
+    def test_medium_risk_prompt_review_requested(self):
+        """Medium risk prompt category should trigger human review."""
+        candidate = _full_candidate(category="prompt", risk_level="medium")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["passed"] is True
+        assert result["needs_human"] is True
+        assert "review_request" in result
+        assert result["review_request"]["request_id"] == "review-cand-001"
+
+    def test_hold_recommendation_review_requested(self):
+        """Hold recommendation should trigger human review regardless of risk."""
+        candidate = _full_candidate(recommendation="hold", risk_level="low", category="docs")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["passed"] is True
+        assert result["needs_human"] is True
+
+    def test_high_risk_triggers_review(self):
+        """High risk should trigger review even for docs category."""
+        candidate = _full_candidate(risk_level="high", category="docs")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["needs_human"] is True
+
+    def test_code_category_triggers_review(self):
+        candidate = _full_candidate(category="code", risk_level="low")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["needs_human"] is True
+
+    def test_workflow_category_triggers_review(self):
+        candidate = _full_candidate(category="workflow", risk_level="low")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["needs_human"] is True
+
+    def test_tests_category_triggers_review(self):
+        candidate = _full_candidate(category="tests", risk_level="low")
+        gate = HumanReviewGate()
+        result = gate.validate(candidate)
+        assert result["needs_human"] is True
+
+    def test_is_advisory_not_required(self):
+        gate = HumanReviewGate()
+        assert gate.required is False
+
+    def test_create_review_request_structure(self):
+        """Verify _create_review_request returns all expected fields."""
+        candidate = _full_candidate(
+            id="cand-99",
+            category="prompt",
+            risk_level="medium",
+            title="Improve greeting",
+            proposed_change_summary="Add morning greeting variant",
+        )
+        exe = _execution(diff="+ hello world")
+        gate = HumanReviewGate()
+        req = gate._create_review_request(candidate, exe)
+        assert req["request_id"] == "review-cand-99"
+        assert req["candidate_id"] == "cand-99"
+        assert req["category"] == "prompt"
+        assert req["risk_level"] == "medium"
+        assert req["title"] == "Improve greeting"
+        assert req["description"] == "Add morning greeting variant"
+        assert req["diff"] == "+ hello world"
+        assert req["status"] == "pending"
+        assert req["requested_at"] is None  # Set by caller
+
+    def test_create_review_request_no_execution(self):
+        """Review request with no execution should have empty diff."""
+        candidate = _full_candidate(id="cand-42")
+        gate = HumanReviewGate()
+        req = gate._create_review_request(candidate, execution=None)
+        assert req["diff"] == ""
+
+    def test_check_review_status_not_found(self):
+        gate = HumanReviewGate()
+        result = gate.check_review_status(Path("/nonexistent/path.json"))
+        assert result["completed"] is False
+        assert result["reason"] == "request_not_found"
+
+    def test_check_review_status_completed(self):
+        import json
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+            json.dump(
+                {"status": "completed", "decision": "approve", "reviewer": "alice", "comments": "LGTM"},
+                f,
+            )
+            tmp_path = f.name
+        try:
+            gate = HumanReviewGate()
+            result = gate.check_review_status(Path(tmp_path))
+            assert result["completed"] is True
+            assert result["decision"] == "approve"
+            assert result["reviewer"] == "alice"
+            assert result["comments"] == "LGTM"
+        finally:
+            os.unlink(tmp_path)
+
+    def test_check_review_status_still_pending(self):
+        import json
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".json", mode="w", delete=False) as f:
+            json.dump({"status": "pending"}, f)
+            tmp_path = f.name
+        try:
+            gate = HumanReviewGate()
+            result = gate.check_review_status(Path(tmp_path))
+            assert result["completed"] is False
+            assert result["reason"] == "still_pending"
+        finally:
+            os.unlink(tmp_path)
+
+
+# ===================================================================
+# _extract_human_review_signal()
+# ===================================================================
+
+
+class TestExtractHumanReviewSignal:
+    def test_no_human_review_layer(self):
+        verdict = {"layer_results": [{"passed": True, "layer": "schema"}]}
+        assert _extract_human_review_signal(verdict) is None
+
+    def test_human_review_present_but_not_needed(self):
+        verdict = {
+            "layer_results": [
+                {"passed": True, "layer": "schema"},
+                {"passed": True, "layer": "human_review", "needs_human": False},
+            ]
+        }
+        assert _extract_human_review_signal(verdict) is None
+
+    def test_human_review_needed(self):
+        req = {"request_id": "review-x"}
+        verdict = {
+            "layer_results": [
+                {"passed": True, "layer": "schema"},
+                {"passed": True, "layer": "human_review", "needs_human": True, "review_request": req},
+            ]
+        }
+        assert _extract_human_review_signal(verdict) == req
+
+
+# ===================================================================
+# Integration: human review gate escalates keep → pending_promote
+# ===================================================================
+
+
+class TestIntegrationHumanReviewEscalation:
+    """Test that when HumanReviewGate signals needs_human, keep→pending_promote."""
+
+    def test_keep_escalated_when_human_review_needed(self):
+        """A medium-risk prompt candidate that would otherwise keep should be escalated."""
+        # Candidate that would pass all required gates
+        candidate = _full_candidate(
+            category="prompt",  # triggers human review
+            risk_level="medium",  # also triggers human review
+        )
+        exe = _execution(modified=False, status="success")
+        # Run all layers
+        verdict = run_gate_layers(candidate, exe)
+        assert verdict["all_passed"] is True
+        # The human review layer should signal needs_human
+        human_req = _extract_human_review_signal(verdict)
+        assert human_req is not None
+        assert human_req["request_id"] == "review-cand-001"
+
+    def test_low_risk_docs_no_escalation(self):
+        """Low-risk docs should not trigger human review signal."""
+        candidate = _full_candidate(category="docs", risk_level="low")
+        exe = _execution(modified=False, status="success")
+        verdict = run_gate_layers(candidate, exe)
+        assert verdict["all_passed"] is True
+        human_req = _extract_human_review_signal(verdict)
+        assert human_req is None
