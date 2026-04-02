@@ -302,6 +302,34 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 
     scores["security"] = sum(sec_checks) / len(sec_checks) if sec_checks else 0.5
 
+    # Trigger quality: how well the frontmatter description enables
+    # accurate skill routing (inspired by alirezarezvani/claude-skills
+    # trigger evaluation pattern with 10 should-trigger + 10 should-not queries)
+    trig_checks: list[bool] = []
+    if has_skill_md:
+        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        if content.startswith("---") and content.count("---") >= 2:
+            fm = content.split("---", 2)[1]
+            desc_lines = [l for l in fm.split("\n") if l.strip().startswith("description:")]
+            desc_text = desc_lines[0] if desc_lines else ""
+            # 1. Description exists and is non-trivial (>30 chars)
+            trig_checks.append(len(desc_text) > 30)
+            # 2. Description contains trigger keywords/phrases
+            trig_checks.append(len(desc_text) > 50)
+            # 3. Has 'triggers:' field with explicit trigger list
+            trig_checks.append("triggers:" in fm)
+            # 4. Has disambiguation (mentions what NOT to use for)
+            desc_lower = desc_text.lower()
+            trig_checks.append(any(w in desc_lower for w in ["not for", "don't use", "instead use", "不适用"]))
+            # 5. Description mentions related/similar skills for disambiguation
+            trig_checks.append(any(w in desc_lower for w in ["related", "see also", "关联", "参见"]))
+        else:
+            trig_checks = [False] * 5
+    else:
+        trig_checks = [False] * 5
+
+    scores["trigger_quality"] = sum(trig_checks) / len(trig_checks) if trig_checks else 0.0
+
     return scores
 
 

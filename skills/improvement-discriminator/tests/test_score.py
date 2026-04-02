@@ -279,3 +279,36 @@ class TestDefaultReviewers:
             result = score_candidate_with_config(candidate, reviewer)
             assert "score" in result
             assert 0.0 <= result["score"] <= 10.0
+
+
+# ---------------------------------------------------------------------------
+# LLM Judge in panel mode (regression test for the bug)
+# ---------------------------------------------------------------------------
+
+
+class TestPanelWithLLMJudge:
+    """LLM judge should be active when --panel and --llm-judge are both used."""
+
+    def test_panel_with_mock_llm_judge(self):
+        """Mock LLM judge should produce non-zero llm_score in panel reviews."""
+        from llm_judge import LLMJudge, JudgeConfig
+
+        candidate = _make_candidate(category="docs", risk_level="low")
+        judge = LLMJudge(JudgeConfig(backend="mock"))
+
+        result = run_multi_reviewer_panel(
+            candidate,
+            llm_judge=judge,
+            target_content="# Some SKILL.md content\n",
+        )
+        # Each reviewer should have an llm_score
+        for review in result["panel_reviews"]:
+            assert "llm_score" in review, f"Reviewer {review['reviewer']} missing llm_score"
+            assert review["llm_score"] > 0.0, f"Reviewer {review['reviewer']} has zero llm_score"
+
+    def test_panel_without_llm_judge_has_no_llm_score(self):
+        """Without LLM judge, panel reviews should not contain llm_score."""
+        candidate = _make_candidate()
+        result = run_multi_reviewer_panel(candidate)
+        for review in result["panel_reviews"]:
+            assert "llm_score" not in review

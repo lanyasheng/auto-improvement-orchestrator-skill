@@ -196,8 +196,29 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "dim-skill"
         skill.mkdir()
         scores = evaluate_skill_dimensions(skill)
-        expected_dims = {"coverage", "accuracy", "efficiency", "reliability", "security"}
+        expected_dims = {"coverage", "accuracy", "efficiency", "reliability", "security", "trigger_quality"}
         assert set(scores.keys()) == expected_dims
+
+    def test_trigger_quality_with_good_description(self, tmp_path):
+        """Skill with pushy trigger description and triggers: field scores well."""
+        skill = tmp_path / "trig-skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text(
+            "---\nname: test\n"
+            "description: Evaluate skill quality with structural checks. Not for code review or linting.\n"
+            "triggers:\n  - evaluate\n  - quality check\n---\n# Test\n",
+            encoding="utf-8",
+        )
+        scores = evaluate_skill_dimensions(skill)
+        assert scores["trigger_quality"] >= 0.6  # has description, triggers, disambiguation
+
+    def test_trigger_quality_without_frontmatter(self, tmp_path):
+        """Skill without frontmatter gets 0.0 trigger quality."""
+        skill = tmp_path / "nofm-skill"
+        skill.mkdir()
+        (skill / "SKILL.md").write_text("# No Frontmatter\n", encoding="utf-8")
+        scores = evaluate_skill_dimensions(skill)
+        assert scores["trigger_quality"] == 0.0
 
     def test_scripts_without_tests_penalises_reliability(self, tmp_path):
         """A skill with scripts/ but no tests/ should get low reliability."""

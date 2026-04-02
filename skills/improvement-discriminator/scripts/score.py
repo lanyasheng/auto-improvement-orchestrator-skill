@@ -357,21 +357,51 @@ def _heuristic_score_with_config(candidate: dict, config: ReviewerConfig) -> tup
     return score, risk_penalty
 
 
-def score_candidate_with_config(candidate: dict, config: ReviewerConfig) -> dict:
+def score_candidate_with_config(
+    candidate: dict,
+    config: ReviewerConfig,
+    *,
+    llm_judge: LLMJudge | None = None,
+    target_content: str = "",
+) -> dict:
     """Score a candidate using a specific ReviewerConfig.
 
     Mirrors score_candidate() but substitutes the reviewer's category_weights
     and risk_sensitivity.  Evaluator evidence is blended only when
-    config.use_evaluator is True.
+    config.use_evaluator is True.  LLM judge is blended when provided.
     """
     heuristic, risk_penalty = _heuristic_score_with_config(candidate, config)
     evidence = build_evaluator_evidence(candidate) if config.use_evaluator else None
     evaluator_score = evidence.get("overall_score_10") if evidence else None
-    final_score = heuristic
-    if evaluator_score is not None:
-        final_score = round((heuristic * HEURISTIC_WEIGHT) + (evaluator_score * EVALUATOR_WEIGHT), 2)
 
-    blockers = build_blockers(candidate, evidence=evidence)
+    # --- LLM Judge evaluation ---
+    llm_verdict: JudgeVerdict | None = None
+    if llm_judge is not None:
+        try:
+            llm_verdict = llm_judge.evaluate(candidate, target_content=target_content)
+        except Exception as exc:
+            logger.warning("LLM judge evaluation failed for reviewer %s: %s", config.name, exc)
+
+    llm_score_10 = llm_verdict.score * 10.0 if llm_verdict else None
+
+    # --- Blended scoring (same logic as score_candidate) ---
+    if evaluator_score is not None and llm_score_10 is not None:
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT_ALL_THREE
+            + llm_score_10 * LLM_WEIGHT_ALL_THREE
+            + evaluator_score * EVALUATOR_WEIGHT_ALL_THREE, 2)
+    elif llm_score_10 is not None:
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT_WITH_LLM
+            + llm_score_10 * LLM_WEIGHT_WITHOUT_EVALUATOR, 2)
+    elif evaluator_score is not None:
+        final_score = round(
+            heuristic * HEURISTIC_WEIGHT
+            + evaluator_score * EVALUATOR_WEIGHT, 2)
+    else:
+        final_score = heuristic
+
+    blockers = build_blockers(candidate, evidence=evidence, llm_verdict=llm_verdict)
     recommendation = build_recommendation(candidate, final_score, blockers, evidence=evidence)
     judge_notes = build_judge_notes(candidate, recommendation, blockers, evidence=evidence)
 
@@ -389,23 +419,46 @@ def score_candidate_with_config(candidate: dict, config: ReviewerConfig) -> dict
             "future_replacement": "full-skill-evaluator-adapter",
             "evaluated_at": utc_now_iso(),
             "evaluator_evidence_enabled": config.use_evaluator,
+            "llm_judge_enabled": llm_judge is not None,
         },
     }
     if evidence:
         payload["score_components"] = {
-            "heuristic_weight": HEURISTIC_WEIGHT,
-            "evaluator_weight": EVALUATOR_WEIGHT,
+            "heuristic_weight": HEURISTIC_WEIGHT if llm_judge is None else HEURISTIC_WEIGHT_ALL_THREE,
+            "evaluator_weight": EVALUATOR_WEIGHT if llm_judge is None else EVALUATOR_WEIGHT_ALL_THREE,
             "heuristic_score": heuristic,
             "evaluator_score": evaluator_score,
         }
+        if llm_score_10 is not None:
+            payload["score_components"]["llm_weight"] = LLM_WEIGHT_ALL_THREE
+            payload["score_components"]["llm_score"] = llm_score_10
         payload["evaluator_score"] = evaluator_score
         payload["evaluator_evidence"] = evidence
+    elif llm_score_10 is not None:
+        payload["score_components"] = {
+            "heuristic_weight": HEURISTIC_WEIGHT_WITH_LLM,
+            "llm_weight": LLM_WEIGHT_WITHOUT_EVALUATOR,
+            "heuristic_score": heuristic,
+            "llm_score": llm_score_10,
+        }
+    if llm_verdict is not None:
+        payload["llm_verdict"] = {
+            "score": llm_verdict.score,
+            "decision": llm_verdict.decision,
+            "reasoning": llm_verdict.reasoning,
+            "dimensions": llm_verdict.dimensions,
+            "confidence": llm_verdict.confidence,
+            "suggestions": llm_verdict.suggestions,
+        }
     return payload
 
 
 def run_multi_reviewer_panel(
     candidate: dict,
     reviewers: list[ReviewerConfig] | None = None,
+    *,
+    llm_judge: LLMJudge | None = None,
+    target_content: str = "",
 ) -> dict:
     """Run blind multi-reviewer panel on a candidate.
 
@@ -418,12 +471,18 @@ def run_multi_reviewer_panel(
     reviewers = reviewers or DEFAULT_REVIEWERS
     reviews: list[dict] = []
     for reviewer in reviewers:
-        scored = score_candidate_with_config(candidate, reviewer)
-        reviews.append({
+        scored = score_candidate_with_config(
+            candidate, reviewer,
+            llm_judge=llm_judge, target_content=target_content,
+        )
+        review_entry = {
             "reviewer": reviewer.name,
             "score": scored["score"],
             "recommendation": scored["recommendation"],
-        })
+        }
+        if "llm_verdict" in scored:
+            review_entry["llm_score"] = scored["llm_verdict"]["score"]
+        reviews.append(review_entry)
 
     # --- Determine consensus ---
     recommendations = [r["recommendation"] for r in reviews]
@@ -479,10 +538,14 @@ def main() -> int:
                 logger.warning("Could not read target SKILL.md: %s", exc)
 
     if args.panel:
-        # Multi-reviewer panel mode (Phase 2A)
+        # Multi-reviewer panel mode (Phase 2A) — now integrates LLM judge
         panel_results = []
         for candidate in raw_candidates:
-            panel = run_multi_reviewer_panel(candidate)
+            panel = run_multi_reviewer_panel(
+                candidate,
+                llm_judge=llm_judge_instance,
+                target_content=target_content,
+            )
             panel_results.append({
                 **candidate,
                 "score": panel["aggregated_score"],
