@@ -15,6 +15,11 @@ Conservative gate: only auto-keeps low-risk docs/reference/guardrail edits; ever
 - Decide whether to keep, pend, revert, or reject an executed candidate
 - Run mechanical validation (5-layer) before the decision
 
+
+## When NOT to Use
+
+- [Define exclusion conditions here]
+
 ## CLI
 ```bash
 python3 scripts/gate.py --execution result.json --out receipt.json
