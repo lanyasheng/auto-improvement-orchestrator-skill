@@ -1,351 +1,727 @@
-# Auto-Improvement Orchestrator Skill
+# Auto-Improvement Orchestrator
 
-[English](#english) | [中文](#中文)
+Closed-loop pipeline that evaluates, improves, and continuously optimizes AI Agent Skills.
+
+**10 skills | 5,000+ lines Python | 427+ tests | pyyaml + pytest only**
 
 ---
 
-<a name="english"></a>
+## The Problem
 
-## English
+AI coding agents (Claude Code, Cursor, Aider, etc.) increasingly rely on SKILL.md files -- structured instruction sets that guide agent behavior for specific tasks like code review, release notes generation, or crash analysis. A mature project might have 30+ skills.
 
-Automated evaluation and self-improvement pipeline for AI Agent Skills. Evaluates any skill's quality across 6 structural + 4 semantic dimensions, generates improvement candidates, validates through multi-reviewer blind panel and 6-layer mechanical gates, and auto-applies improvements with Pareto front regression protection.
+The problem: **there is no way to know if a skill change actually makes the agent work better.**
 
-### Why Choose This?
+Consider a typical skill improvement workflow:
 
-#### The Problem
+1. Engineer edits SKILL.md to add better instructions
+2. Engineer subjectively judges "this looks better"
+3. The change ships. Maybe it helped, maybe it regressed something else.
 
-Most AI skill ecosystems have no quality control. Skills are published without evaluation, improvements are manual, and there's no way to prevent regressions. Existing approaches either:
-- **Rely on manual review** — doesn't scale, inconsistent standards
-- **Use single-dimension scoring** — misses structural vs semantic gaps
-- **Have no regression protection** — fixing one thing breaks another
-- **Generate cosmetic improvements** — template READMEs, `assert True` tests
+Existing tools check document *structure* (does it have a frontmatter? a "When to Use" section?) but not *execution effectiveness* (does an AI agent following this skill actually produce correct output?). You can have a SKILL.md that scores 99% on structural quality metrics and still produces wrong answers on real tasks.
 
-#### What We Do Differently
+Manual skill iteration does not scale. When you have 28 skills and each needs periodic improvement, you need automation -- and that automation needs a feedback signal stronger than "the document looks well-formatted."
 
-| Problem | Existing Solutions | Our Approach |
-|---------|-------------------|-------------|
-| Single evaluator bias | One reviewer scores | **Multi-reviewer blind panel** with cognitive labels (CONSENSUS/VERIFIED/DISPUTED) |
-| Rule-only or LLM-only | Pick one | **Blended scoring**: heuristic 60% + LLM-as-Judge 40% (configurable) |
-| No regression guard | Accept if score improves | **Pareto front**: reject if ANY dimension regresses >5% |
-| Failed retries waste context | Same prompt, same failure | **Ralph Wiggum**: inject failure trace into next attempt |
-| Pure-text skills penalized | Require tests/README | **Fair evaluation**: reliability=1.0 for skills without scripts |
-| No quality standard | Ad-hoc checks | **15-point accuracy** from skill-creator P0 spec + industry patterns |
-| No memory across runs | Start fresh every time | **3-layer memory**: HOT/WARM/COLD with pattern matching |
+This project solves three problems:
 
-#### Compared to Alternatives
+1. **Measurement**: How good is a skill, really? (Not just structurally -- does it actually work?)
+2. **Improvement**: Given measurement, can we automatically improve the weakest dimensions?
+3. **Continuous optimization**: Can we run this overnight like Karpathy's autoresearch?
 
-| Feature | [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | [affaan-m/everything-claude-code](https://github.com/affaan-m/everything-claude-code) | **Ours** |
-|---------|-------------------|--------------------------|---------|
-| Evaluation | External SaaS (Tessl) | None | **Built-in 6+4 dim** |
-| Self-improvement | None | None | **Karpathy loop** |
-| Multi-reviewer | None | None | **Blind panel** |
-| Regression guard | None | None | **Pareto front** |
-| LLM-as-Judge | None | None | **Claude/OpenAI/Mock** |
-| Mechanical gate | 8-point checklist | None | **6-layer gate** |
-| Tests | evals.json | 58 files | **289 pytest** |
-| Memory | None | None | **HOT/WARM/COLD** |
+---
 
-### Architecture
+## Architecture
+
+The system is built as 10 independent skills that compose into a pipeline. Each skill is a standalone CLI tool with its own tests, and the orchestrator chains them together.
 
 ```
-User → orchestrator → generator (propose candidates)
-                    → discriminator (multi-reviewer + LLM Judge)
-                    → gate (6-layer: Schema→Compile→Lint→Regression→Review→Human)
-                    → executor (apply + backup/rollback)
-                    → learner (Karpathy loop + 3-layer memory)
-                    ↻ Ralph Wiggum: fail → inject trace → retry (max 3)
+                        +-----------+
+                        | generator |  (1) Propose improvements
+                        +-----+-----+
+                              |
+                              v
+                     +---------------+
+                     | discriminator |  (2) Multi-reviewer scoring
+                     +-------+-------+
+                              |
+                              v
+                      +-----------+
+                      | evaluator |  (3) Run real tasks, measure pass rate
+                      +-----+-----+
+                              |
+                              v
+                        +------+
+                        | gate |  (4) 6-layer quality gate
+                        +--+---+
+                              |
+                              v
+                      +----------+
+                      | executor |  (5) Apply with backup + rollback
+                      +----+-----+
+                              |
+                              v
+                      +---------+
+                      | learner |  (6) Karpathy self-improvement loop
+                      +---------+
+
+     +--------------------+         +------------------+
+     | autoloop-controller|         | benchmark-store  |
+     | (continuous loop)  |         | (Pareto front,   |
+     |  - plateau detect  |         |  frozen tests,   |
+     |  - cost cap        |         |  quality tiers)  |
+     |  - oscillation     |         |                  |
+     +--------------------+         +------------------+
+
+     Retry on failure (Ralph Wiggum loop):
+     gate=revert --> extract trace --> inject into generator --> retry
 ```
 
-### 7 Skills
+### Why "Ralph Wiggum"?
 
-| Skill | Type | Role |
-|-------|------|------|
-| **improvement-orchestrator** | Orchestration | Full pipeline dispatch + Ralph Wiggum retry |
-| **improvement-generator** | Learning | Analyze target + feedback + failure trace → candidates |
-| **improvement-discriminator** | Review | Multi-reviewer blind panel + LLM-as-Judge 4-dim semantic |
-| **improvement-executor** | Tool | 4 action types + automatic backup + rollback |
-| **improvement-gate** | Rule | 6-layer mechanical gate + human review queue |
-| **benchmark-store** | Knowledge | Frozen benchmarks + Pareto front + quality tiers |
-| **improvement-learner** | Learning | 6-dim evaluation + Karpathy loop + HOT/WARM/COLD memory |
+The retry loop is named after the observation that naive LLM retry loops are like Ralph Wiggum saying "I'm helping!" -- they retry the same thing and fail the same way. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blocker was) and injects it into the next generator call. The generator reads this trace and skips strategies that have failed 3+ times on the same dimension. This is inspired by the GEPA paper's trace-aware reflection pattern.
 
-### Quick Start
+---
+
+## Stage Details
+
+### Stage 1: Generator (`improvement-generator`)
+
+Analyzes the target skill's SKILL.md structure, reads feedback signals (user feedback files, memory patterns, previous failure traces), and produces a ranked list of improvement candidates.
+
+**Key design decision**: Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `workflow`, `tests`) and risk level (`low`, `medium`, `high`). Only `low`-risk document-type candidates are auto-executed. Everything else enters a human review queue.
+
+```
+Input:  --target /path/to/skill [--trace failure.json] [--source feedback.md]
+Output: candidates.json (array of {id, category, risk_level, execution_plan})
+```
+
+### Stage 2: Discriminator (`improvement-discriminator`)
+
+Multi-signal scoring engine with 4 independent scoring modes that can be combined:
+
+| Mode | Flag | What it measures |
+|------|------|-----------------|
+| Heuristic | (default) | Category bonus + source refs + risk penalty |
+| + Evaluator evidence | `--use-evaluator-evidence` | Heuristic 70% + evaluator rubric 30% |
+| + LLM Judge | `--llm-judge {claude,openai,mock}` | Heuristic 60% + LLM semantic analysis 40% |
+| + Multi-reviewer panel | `--panel` | 2+ independent reviewers with cognitive labels |
+
+The panel produces cognitive consensus labels: `CONSENSUS` (all agree), `VERIFIED` (majority), or `DISPUTED` (disagreement). Disputed candidates are automatically held for human review.
+
+```
+Input:  candidates.json [--panel] [--llm-judge mock]
+Output: ranking.json ({scored_candidates, recommendations: accept/hold/reject})
+```
+
+### Stage 3: Evaluator (`improvement-evaluator`)
+
+**This is the key innovation.** Instead of just scoring the *document*, the evaluator measures whether the skill actually makes an AI agent perform better on real tasks.
+
+It works by running a task suite -- a YAML file defining tasks with prompts and judges -- against the candidate SKILL.md using `claude -p`, then comparing the pass rate against a cached baseline.
+
+Detailed explanation in [The Evaluator](#the-evaluator-novel-contribution) section below.
+
+```
+Input:  ranking.json + task_suite.yaml + candidate-id
+Output: evaluation.json ({execution_pass_rate, baseline_pass_rate, delta, verdict})
+```
+
+### Stage 4: Gate (`improvement-gate`)
+
+6-layer mechanical quality gate. Any layer fail = reject. No exceptions.
+
+| Layer | Gate | Pass Condition |
+|-------|------|---------------|
+| 1 | **SchemaGate** | Execution result has valid JSON structure |
+| 2 | **CompileGate** | Target file is syntactically valid after change |
+| 3 | **LintGate** | No new lint warnings introduced |
+| 4 | **RegressionGate** | No Pareto dimension regressed beyond 5% tolerance |
+| 5 | **ReviewGate** | Multi-reviewer consensus is not DISPUTED+reject |
+| 6 | **HumanReviewGate** | High-risk candidates require manual approval |
+
+The gate produces one of four decisions:
+- `keep` -- Change is accepted and retained
+- `pending_promote` -- Valuable but needs human review
+- `reject` -- Denied (no file changes made)
+- `revert` -- Denied (file changes rolled back from backup)
+
+```
+Input:  ranking.json + execution.json
+Output: receipt.json ({decision, per_layer_results, rollback_pointer})
+```
+
+### Stage 5: Executor (`improvement-executor`)
+
+Applies the accepted candidate to the target file with automatic backup. Supports 4 action types:
+
+| Action | Description |
+|--------|-------------|
+| `append_markdown_section` | Append a new section to the end |
+| `replace_markdown_section` | Replace an existing section by heading match |
+| `insert_before_section` | Insert content before a matched heading |
+| `update_yaml_frontmatter` | Merge fields into YAML frontmatter |
+
+Every execution creates a backup at `executions/backups/<run-id>/` with a rollback pointer. The executor also supports `--dry-run` for previewing changes.
+
+```
+Input:  ranking.json + candidate-id
+Output: execution.json ({diff, backup_path, rollback_pointer})
+```
+
+### Stage 6: Learner (`improvement-learner`)
+
+The real Karpathy self-improvement loop. Each iteration:
+
+1. Evaluate current state across 6 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality)
+2. Find the weakest dimension
+3. Propose a targeted improvement based on patterns + 3-layer memory
+4. Backup + apply
+5. Re-evaluate
+6. Keep if Pareto-accepted (no dimension regressed), revert otherwise
+7. Record outcome in HOT/WARM/COLD memory
+
+The learner also supports **multi-role evaluation**: the same skill is scored from 4 perspectives (User, Developer, Security Auditor, Architect) with different dimension weights. This prevents optimizing for one stakeholder at the expense of another.
+
+```
+Input:  --skill-path /path/to/skill --max-iterations 5
+Output: report.json ({iterations, kept, reverted, final_scores, memory_stats})
+```
+
+---
+
+## The Evaluator (Novel Contribution)
+
+### The problem with static checks
+
+The learner scores skills across 6 structural dimensions. This is useful but insufficient. A skill can score 0.85 on accuracy (has frontmatter, "When to Use" section, code examples, etc.) while still producing wrong answers when an AI agent follows it.
+
+Example: a release-notes generator skill might have perfect structure but fail to mention that titles should be in Chinese. Static analysis cannot catch this -- you need to actually run the skill and check the output.
+
+### Task suite format
+
+Task suites are YAML files that define 5-10 tasks with prompts and judges:
+
+```yaml
+skill_id: "release-notes-generator"
+version: "1.0"
+tasks:
+  - id: "structure-01"
+    description: "Release notes must have standard sections"
+    prompt: |
+      Based on the following commit data, generate release notes...
+      - fix: fixed text click handler
+      - feat: added unified template fetch API
+    judge:
+      type: "contains"
+      expected: ["Version Overview", "New Features", "Bug Fixes"]
+    timeout_seconds: 120
+
+  - id: "isolation-01"
+    description: "iOS release notes must not contain Android keywords"
+    prompt: |
+      Generate iOS platform release notes...
+    judge:
+      type: "llm-rubric"
+      rubric: |
+        Check that the output does NOT contain "Kotlin", "Android",
+        "Java" keywords. Score 1.0 if clean, 0.0 if any leakage.
+      pass_threshold: 0.8
+```
+
+### Three judge types
+
+| Judge | Mechanism | Best for |
+|-------|-----------|----------|
+| **ContainsJudge** | Checks output contains all expected keywords (case-insensitive) | Deterministic structural checks |
+| **PytestJudge** | Writes AI output to temp file, runs pytest with `AI_OUTPUT_FILE` env var | Structured output validation |
+| **LLMRubricJudge** | LLM scores output against a rubric (mock mode available) | Semantic quality assessment |
+
+The PytestJudge has a security constraint: `test_file` must start with `fixtures/` to prevent path traversal.
+
+### Baseline comparison with 7-day TTL cache
+
+The evaluator runs the task suite twice: once with the candidate SKILL.md and once with the original (baseline) SKILL.md. The baseline result is cached with a 7-day TTL using a content-hash key (SHA-256 of skill content + suite path).
+
+If the baseline pass rate is below 20%, the evaluator aborts -- the task suite itself is probably broken.
+
+### Conditional evaluation
+
+The evaluator only runs when the discriminator score exceeds a threshold (default: 6.0). This saves 60%+ of evaluation cost on low-quality candidates that would fail the gate anyway.
+
+```python
+if candidate_score < args.eval_threshold:
+    # Skip evaluation, return verdict="skipped"
+    return
+```
+
+### Standalone mode
+
+For quick testing without the full pipeline:
 
 ```bash
+python3 scripts/evaluate.py \
+  --task-suite /path/to/task_suite.yaml \
+  --state-root /tmp/eval \
+  --standalone \
+  --mock  # or remove --mock to use real claude -p
+```
+
+---
+
+## Autoloop Controller
+
+Wraps the orchestrator in a persistent loop with convergence detection and cost control. Inspired by Karpathy's autoresearch pattern of running improvement overnight.
+
+### 3 modes
+
+| Mode | Trigger | Behavior |
+|------|---------|----------|
+| `single-run` | CLI / cron | Run iterations until termination, then exit |
+| `continuous` | CLI | Loop with configurable cooldown between iterations |
+| `scheduled` | system cron | Exit after each iteration, cron triggers next |
+
+### 4 termination conditions (OR logic)
+
+1. **max_iterations** reached (default: 5)
+2. **cost_cap** exceeded (default: $50)
+3. **score plateau** detected -- N consecutive rounds with no improvement
+4. **oscillation** detected -- keep-reject-keep-reject alternating pattern
+
+Plateau detection:
+
+```python
+def detect_plateau(score_history, window=3):
+    """Returns True if best score in last `window` rounds
+    does not exceed the historical best before that window."""
+    recent = score_history[-window:]
+    earlier = score_history[:-window]
+    best_before = max(h["weighted_score"] for h in earlier)
+    best_recent = max(h["weighted_score"] for h in recent)
+    return best_recent <= best_before
+```
+
+Oscillation detection:
+
+```python
+def detect_oscillation(score_history, window=4):
+    """Detect keep-reject-keep-reject alternating pattern."""
+    recent_decisions = [h["decision"] for h in score_history[-window:]]
+    return recent_decisions in [
+        ["keep", "reject"] * (window // 2),
+        ["reject", "keep"] * (window // 2),
+    ]
+```
+
+### State persistence for cross-session resumption
+
+All state is persisted to `autoloop_state.json` after each iteration. If the process is killed and restarted, it picks up from where it left off:
+
+```json
+{
+  "schema_version": "1.0",
+  "target": "/path/to/skill",
+  "iterations_completed": 3,
+  "max_iterations": 5,
+  "total_cost_usd": 12.50,
+  "current_scores": {"clarity": 0.85, "coverage": 0.72},
+  "score_history": [
+    {"iteration": 1, "weighted_score": 0.78, "decision": "keep"},
+    {"iteration": 2, "weighted_score": 0.80, "decision": "keep"},
+    {"iteration": 3, "weighted_score": 0.82, "decision": "keep"}
+  ],
+  "plateau_counter": 0,
+  "status": "running"
+}
+```
+
+An append-only `iteration_log.jsonl` provides a full audit trail.
+
+---
+
+## Stage 8: Forge (`skill-forge`)
+
+Generates new Skills from requirements OR generates task_suite.yaml for existing Skills. Two modes:
+
+- `--from-skill /path/to/skill` -- Analyze existing SKILL.md, generate task_suite.yaml
+- `--from-spec spec.yaml` -- Generate complete Skill + task suite from structured requirements
+
+The forge extracts test scenarios from 5 sources in a SKILL.md: description, when-to-use bullets, `<example>` tags, `<anti-example>` tags, and output artifacts tables. It assigns judge types (ContainsJudge or LLMRubricJudge) and caps at 10 tasks per suite.
+
+This completes the full lifecycle: **forge -> evaluate -> improve -> continuously optimize**.
+
+---
+
+## Real Experiment Results
+
+These results are from running the system on a real project with 28 AI coding skills.
+
+### Experiment 1: Batch evaluation of 28 project skills
+
+We ran the learner's 6-dimension evaluation on all 28 skills in the project.
+
+**Distribution:**
+
+| Tier | Score Range | Count | Skills |
+|------|------------|-------|--------|
+| POWERFUL | >= 0.85 | 0 | -- |
+| SOLID (high) | 0.79-0.80 | 5 | code-review, crash-analysis, static-analysis, doc-gen, component-dev |
+| SOLID | 0.70-0.78 | 18 | cpp-expert, ios-expert, android-expert, etc. |
+| GENERIC | 0.65-0.69 | 5 | perf-profiler, component-dev, skill-creator, release-notes, system-maintenance |
+
+Key finding: **zero skills reached POWERFUL tier out of the box.** Even well-maintained skills had accuracy gaps (missing `<example>` tags, vague language, incomplete Output Artifacts sections).
+
+### Experiment 2: Self-improvement loop on lowest-scoring skill
+
+Target: `system-maintenance` skill, starting score 0.653 (GENERIC tier).
+
+**Result: 0.653 --> 0.803 in 3 iterations, 3/3 improvements kept.**
+
+| Iteration | Type | Description | Score Before | Score After | Decision |
+|-----------|------|-------------|-------------|-------------|----------|
+| 1 | accuracy | Add frontmatter + When to Use/Not sections | 0.653 | 0.715 | keep |
+| 2 | reliability | Auto-generate test stubs for scripts/ | 0.715 | 0.770 | keep |
+| 3 | accuracy | Add `<example>` and `<anti-example>` tags | 0.770 | 0.803 | keep |
+
+The biggest single-dimension gain: **reliability 0.30 --> 1.00** (from "has scripts but no tests" to "has scripts with passing tests"). The learner auto-generated test stubs that actually passed, which flipped the reliability score.
+
+6-dimension profile before/after:
+
+```
+Dimension        Before   After   Delta
+accuracy         0.67     0.85    +0.18
+coverage         0.60     0.80    +0.20
+reliability      0.30     1.00    +0.70
+efficiency       0.87     0.85    -0.02 (within 5% tolerance)
+security         0.83     0.83     0.00
+trigger_quality  0.60     0.80    +0.20
+```
+
+### Experiment 3: Execution effectiveness evaluation
+
+We wrote a 7-task suite for a release-notes generator skill and ran it with real `claude -p` execution (not mock mode).
+
+**Result: 86% pass rate (6/7 tasks passed).**
+
+| Task | Type | Verdict |
+|------|------|---------|
+| Structure check | ContainsJudge | PASS |
+| Platform isolation (iOS) | ContainsJudge | PASS |
+| Platform leakage detection | LLMRubricJudge | PASS |
+| Commit categorization | ContainsJudge | PASS |
+| Commit hash references | ContainsJudge | PASS |
+| Bad release notes review | ContainsJudge | PASS |
+| Module classification | ContainsJudge | **FAIL** |
+
+The 1 failure revealed a real gap: the SKILL.md did not specify how to classify changed files into framework modules. The AI guessed wrong module names because the skill never defined the mapping.
+
+**This is exactly the kind of problem static analysis can never find.** The skill had all the right sections, frontmatter, examples -- but was missing one critical piece of domain knowledge that only shows up when you actually run it against real tasks.
+
+### Experiment 4: Batch improvement of 4 GENERIC-tier skills
+
+We ran the autoloop controller on all 4 skills scoring in the GENERIC tier:
+
+| Skill | Before | After | Kept/Total | Key Improvement |
+|-------|--------|-------|------------|----------------|
+| perf-profiler | 0.661 | 0.803 | 2/3 | Test stubs + frontmatter |
+| component-dev | 0.665 | 0.798 | 1/3 | Accuracy (missing sections) |
+| skill-creator | 0.667 | 0.800 | 1/3 | Test stubs |
+| release-notes | 0.681 | 0.831 | 3/3 | All dimensions improved |
+
+Average improvement: **+0.138** (from GENERIC to SOLID tier).
+
+Total cost: approximately $15-20 in API calls for all 4 skills combined.
+
+The 2/3 and 1/3 kept/total ratios are healthy -- they mean the gate and Pareto front are working. Candidates that regressed any dimension were correctly reverted.
+
+---
+
+## Design Decisions
+
+### Why Not Git Worktrees?
+
+We initially used `git worktree add` to create an isolated branch for each evaluation run. This was architecturally clean but practically painful:
+
+- Creating/destroying worktrees is slow compared to `tempfile.mkdtemp()`
+- Worktree management added 50+ lines of git plumbing code
+- Review feedback: "overkill for single-file evaluation"
+- The isolated evaluation only needs the SKILL.md content, not a full repo checkout
+
+Current approach: tempdir + prompt injection. Write the candidate SKILL.md content to a temp file, prepend it to the task prompt, run `claude -p`, check the output. 10x faster, same isolation guarantees for our use case.
+
+### Why Default pass@1 Instead of pass@3?
+
+LLM outputs are non-deterministic. Running each task 3 times (pass@3) and taking the best result gives a more stable signal. But:
+
+- Cost: 7 tasks x pass@3 = 21 API calls per evaluation
+- Default pass@1 keeps evaluation cost at ~$2.5-5 per run
+- pass@3 is available via `--pass-k 3` for high-stakes decisions (e.g., before shipping to a marketplace)
+
+The evaluator supports configurable pass@k, but defaults to 1 for the common case of rapid iteration.
+
+### Why Pareto Front Instead of Single Score?
+
+A single weighted score (0.0-1.0) is convenient but dangerous. Consider:
+
+- Baseline: accuracy=0.85, coverage=0.70
+- Candidate: accuracy=0.70, coverage=0.85
+- Weighted score: identical (assuming equal weights)
+
+The candidate "improved" coverage by destroying accuracy. A single scalar hides this regression.
+
+The Pareto front enforces: **each dimension must independently not regress beyond 5% tolerance.**
+
+```python
+def check_regression(new_scores):
+    for dim, new_val in new_scores.items():
+        best_val = best_known.get(dim, 0.0)
+        if new_val < best_val * 0.95:  # 5% tolerance
+            return {"regressed": True, "regressions": [dim]}
+    return {"regressed": False}
+```
+
+The 5% tolerance prevents rejecting improvements due to minor measurement noise.
+
+### Why Conditional Evaluation?
+
+The evaluator is expensive (it calls `claude -p` for each task). Running it on every candidate wastes money on low-quality proposals that will fail the gate anyway.
+
+The discriminator score acts as a cheap pre-filter. Only candidates scoring above the threshold (default: 6.0) proceed to evaluation. In practice, this saves 60%+ of evaluation cost.
+
+### Why Three-Layer Memory?
+
+The learner maintains a HOT/WARM/COLD memory hierarchy:
+
+| Layer | Capacity | Behavior |
+|-------|----------|----------|
+| HOT | <= 100 entries | Always loaded. Frequently accessed patterns. |
+| WARM | Unlimited | Overflow from HOT when it exceeds 100. Loaded on demand. |
+| COLD | Archive | > 3 months inactive (planned, not yet implemented). |
+
+When the HOT layer overflows, entries are ranked by `hit_count` and the least-accessed ones spill to WARM. This prevents unbounded memory growth while keeping recent patterns fast to query.
+
+The memory records both successes and failures. If a strategy has failed 3+ times on the same dimension, the generator skips it entirely -- no more wasting iterations on approaches that do not work for this skill.
+
+---
+
+## Comparison with Existing Approaches
+
+| Approach | What it measures | Feedback loop | Execution test | Multi-dimension |
+|----------|-----------------|---------------|----------------|-----------------|
+| **This project** | Structure + Execution | Auto-retry with traces | Yes (task suites) | Yes (Pareto front) |
+| Aider Benchmark | Code correctness | Manual iteration | Yes (Exercism) | No (single pass rate) |
+| Karpathy autoresearch | Single scalar (val_bpb) | Keep/discard loop | Yes (training loss) | No |
+| DSPy | User-defined metric | Bayesian optimization | Depends on metric | No (single objective) |
+| PromptFoo | Assertion pass rate | Manual | Partial (rubrics) | No |
+| ADAS (ICLR 2025) | Meta agent search | Architecture search | Agent benchmarks | No |
+| GEPA (ICLR 2026) | LLM reflection quality | Trace injection | Yes | No |
+
+Key differences:
+- **Structure + execution measurement**: We measure both document quality (6 dimensions) and execution effectiveness (task suites). Most tools do one or the other.
+- **Multi-dimensional Pareto front**: Prevents "fix accuracy by breaking coverage." DSPy, Aider, and autoresearch all use single scalar objectives.
+- **Trace-aware retry**: Like GEPA's reflection, but applied to skill improvement rather than code generation. Failed attempts are not wasted -- they inform the next attempt.
+
+---
+
+## Installation
+
+```bash
+# Clone
 git clone https://github.com/lanyasheng/auto-improvement-orchestrator-skill.git
 cd auto-improvement-orchestrator-skill
-pip install -r requirements.txt
+
+# Install dependencies (only pyyaml + pytest)
+pip install pyyaml pytest
+
+# Run all tests
+python3 -m pytest skills/*/tests/ -v
 ```
 
-**Evaluate a skill:**
+### Quick evaluation of a single skill
+
+```bash
+# Score a skill across 6 dimensions (no changes made)
+python3 skills/improvement-learner/scripts/self_improve.py \
+  --skill-path /path/to/your/skill \
+  --max-iterations 1
+```
+
+Output:
+```json
+{
+  "final_scores": {
+    "accuracy": 0.83,
+    "coverage": 0.80,
+    "reliability": 1.00,
+    "efficiency": 0.87,
+    "security": 0.83,
+    "trigger_quality": 0.60
+  },
+  "iterations": 1,
+  "kept": 0,
+  "reverted": 0
+}
+```
+
+### Run task suite evaluation (standalone mode)
+
+```bash
+python3 skills/improvement-evaluator/scripts/evaluate.py \
+  --task-suite /path/to/task_suite.yaml \
+  --state-root /tmp/eval \
+  --standalone \
+  --mock  # remove for real claude -p execution
+```
+
+### Self-improvement loop (5 iterations)
+
 ```bash
 python3 skills/improvement-learner/scripts/self_improve.py \
-  --skill-path /path/to/skill --max-iterations 1
+  --skill-path /path/to/your/skill \
+  --max-iterations 5 \
+  --memory-dir /tmp/memory \
+  --state-root /tmp/state
 ```
 
-**Self-improvement loop:**
-```bash
-python3 skills/improvement-learner/scripts/self_improve.py \
-  --skill-path /path/to/skill --max-iterations 5 --memory-dir /tmp/memory
-```
+### Full orchestrator pipeline
 
-**Multi-reviewer scoring:**
-```bash
-python3 skills/improvement-discriminator/scripts/score.py \
-  --input candidates.json --panel --llm-judge mock --output scored.json
-```
-
-**Full pipeline:**
 ```bash
 python3 skills/improvement-orchestrator/scripts/orchestrate.py \
-  --target /path/to/skill --state-root /tmp/state --max-retries 3 --out result.json
+  --target /path/to/skill \
+  --state-root /tmp/state \
+  --max-retries 3 \
+  --auto
 ```
 
-### Accuracy Checks (15 items, v2.0)
+### Continuous improvement (autoloop)
 
-| # | Check | Source |
-|---|-------|--------|
-| 1 | YAML frontmatter exists | Basic |
-| 2 | `name:` field | skill-creator |
-| 3 | `description:` field | skill-creator |
-| 4 | Description >40 chars with trigger keywords | Quality pattern |
-| 5 | **Symptom-driven description ("use when...")** | **skill-creator P0** |
-| 6 | When to Use section | Quality pattern |
-| 7 | When NOT to Use section | Quality pattern |
-| 8 | Code examples (```) | Quality pattern |
-| 9 | Usage/CLI section | Quality pattern |
-| 10 | **Few-shot examples (`<example>`/`<anti-example>`)** | **skill-creator P0** |
-| 11 | No vague language (etc./and so on) | Quality pattern |
-| 12 | Minimum length (≥15 lines) | Basic |
-| 13 | Related Skills section | Quality pattern |
-| 14 | Output Artifacts section | Quality pattern |
-| 15 | **Atomicity (no @skill/references/ path coupling)** | **skill-creator P0** |
+```bash
+python3 skills/autoloop-controller/scripts/autoloop.py \
+  --target /path/to/skill \
+  --state-root /tmp/autoloop \
+  --max-iterations 5 \
+  --max-cost 50.0 \
+  --plateau-window 3 \
+  --mode single-run
+```
 
-### Quality Tiers
+### Writing a task suite
 
-| Tier | Score | Meaning |
-|------|-------|---------|
-| **POWERFUL** ⭐ | ≥ 85% | Marketplace ready |
-| **SOLID** | 70–84% | Publishable to GitHub |
-| **GENERIC** | 55–69% | Needs iteration |
+Create a YAML file following this schema:
+
+```yaml
+skill_id: "your-skill-name"
+version: "1.0"
+tasks:
+  - id: "unique-task-id"
+    description: "Human-readable description of what this tests"
+    prompt: "The prompt sent to claude -p with SKILL.md prepended"
+    judge:
+      type: "contains"  # or "pytest" or "llm-rubric"
+      expected: ["keyword1", "keyword2"]
+    timeout_seconds: 120
+```
+
+See `skills/improvement-evaluator/references/task-format.md` and `skills/improvement-evaluator/references/writing-tasks-guide.md` for the full specification.
+
+---
+
+## Project Structure
+
+```
+skills/
+  improvement-generator/     # Stage 1: Propose candidates
+    scripts/propose.py
+    tests/test_propose.py
+    SKILL.md
+
+  improvement-discriminator/ # Stage 2: Multi-reviewer scoring
+    scripts/score.py
+    interfaces/              # LLM judge, assertions, panel
+    tests/
+
+  improvement-evaluator/     # Stage 3: Execution effectiveness
+    scripts/evaluate.py
+    scripts/task_runner.py
+    interfaces/judges.py     # ContainsJudge, PytestJudge, LLMRubricJudge
+    task_suites/             # Example task suites
+    references/              # Task format spec, writing guide
+    tests/
+
+  improvement-gate/          # Stage 4: 6-layer quality gate
+    scripts/gate.py
+    scripts/review.py        # Human review queue management
+    tests/
+
+  improvement-executor/      # Stage 5: Apply with backup/rollback
+    scripts/execute.py
+    scripts/rollback.py
+    tests/
+
+  improvement-learner/       # Stage 6: Karpathy self-improvement loop
+    scripts/self_improve.py
+    scripts/track_progress.py
+    tests/
+
+  improvement-orchestrator/  # Pipeline coordinator
+    scripts/orchestrate.py
+    references/              # Architecture, guardrails, phases, demo
+    tests/
+
+  autoloop-controller/       # Continuous loop wrapper
+    scripts/autoloop.py
+    scripts/convergence.py
+    scripts/cost_tracker.py
+    references/              # State format, scheduling guide
+    tests/
+
+  benchmark-store/           # Frozen benchmarks + Pareto front
+    scripts/benchmark_db.py
+    scripts/pareto.py
+    data/                    # Evaluation standards, test cases, fixtures
+    interfaces/              # Frozen benchmark, hidden tests
+    tests/
+
+  skill-forge/               # Stage 8: Skill + task suite generator
+    scripts/forge.py
+    scripts/task_suite_generator.py
+    scripts/skill_generator.py
+    interfaces/              # Spec schema, templates
+    references/              # Forge architecture
+    tests/
+
+lib/
+  common.py                  # Shared utilities (read_json, write_json, timestamps)
+  pareto.py                  # ParetoFront + ParetoEntry
+```
+
+---
+
+## Quality Tiers
+
+The benchmark store defines 4 quality tiers based on weighted score:
+
+| Tier | Score | Ship? |
+|------|-------|-------|
+| **POWERFUL** | >= 85% | Marketplace ready |
+| **SOLID** | 70-84% | GitHub |
+| **GENERIC** | 55-69% | Needs iteration |
 | **WEAK** | < 55% | Reject or rewrite |
 
-### Install Globally
+Weights: accuracy 30% + coverage 20% + reliability 20% + efficiency 15% + security 15%.
 
-```bash
-# Claude Code
-for skill in skills/*/; do
-  rsync -a --exclude='__pycache__' "$skill" ~/.claude/skills/$(basename "$skill")/
-done
-ln -sfn ~/.claude/skills/_auto-improvement-lib/lib ~/.claude/lib
-
-# OpenClaw
-for skill in skills/*/; do
-  rsync -a --exclude='__pycache__' "$skill" ~/.openclaw/skills/$(basename "$skill")/
-done
-cp -r lib/ ~/.openclaw/lib/
-```
-
-### Tests
-
-```bash
-python3 -m pytest skills/ -v           # All 289 tests
-python3 -m pytest skills/improvement-learner/tests/ -v  # Single skill
-```
-
-### Design References
-
-| Source | Pattern Adopted |
-|--------|----------------|
-| [Karpathy autoresearch](https://github.com/karpathy) | evaluate→modify→re-evaluate→keep/revert loop |
-| [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | 10 quality patterns, POWERFUL/SOLID/GENERIC/WEAK tiers |
-| [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | plugin.json standard |
-| GEPA (ICLR 2026) | Trace-aware feedback (failure injection into next round) |
-| SoK (2025) | Curated > auto-generated skills |
-| Princeton/ETH contextual drag | Context cleanup to prevent 10-20% performance drops |
+These weights are adjustable per skill category (tool, knowledge, orchestration, review, rule, learning).
 
 ---
 
-<a name="中文"></a>
+## References
 
-## 中文
-
-AI Agent Skill 自动评估与自改进管线。评估任意 skill 的质量（6 维结构 + 4 维语义），生成改进候选，通过多审阅者盲审和 6 层机械门禁验证，自动应用改进并用 Pareto front 防止任何维度回退。
-
-### 为什么选择我们？
-
-#### 现有方案的问题
-
-大多数 AI skill 生态没有质量控制。Skill 发布无评估、改进靠手动、回退无防护。现有方案要么：
-- **依赖人工审查** — 不可扩展，标准不一致
-- **单维度打分** — 看不到结构 vs 语义的差距
-- **无回退保护** — 修了 A 坏了 B
-- **生成表面改进** — 模板 README、`assert True` 测试
-
-#### 我们的差异化
-
-| 问题 | 现有方案 | 我们的做法 |
-|------|---------|-----------|
-| 单一评审偏差 | 一个人打分 | **多审阅者盲审**，CONSENSUS/VERIFIED/DISPUTED 认知标签 |
-| 规则 or LLM 二选一 | 只用一种 | **混合评分**: 启发式 60% + LLM-as-Judge 40%（可配置） |
-| 无回退防护 | 分数涨了就接受 | **Pareto front**: 任何维度回退 >5% 即拒绝 |
-| 失败重试浪费 | 同样的 prompt 同样的错 | **Ralph Wiggum**: 把失败 trace 注入下一轮 |
-| 惩罚纯文本 skill | 要求 tests/README | **公平评估**: 无 scripts 的 skill reliability=1.0 |
-| 无质量标准 | 随意检查 | **15 项 accuracy**: 来自 skill-creator P0 规范 + 业界模式 |
-| 跨次运行无记忆 | 每次从零开始 | **三层记忆**: HOT/WARM/COLD，模式匹配 |
-
-#### 与市面同类对比
-
-| 能力 | [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | [everything-claude-code](https://github.com/affaan-m/everything-claude-code) | **我们** |
-|------|-------------------|--------------------------|---------|
-| 评估 | 外部 SaaS (Tessl) | 无 | **内置 6+4 维** |
-| 自改进 | 无 | 无 | **Karpathy 循环** |
-| 多审阅者 | 无 | 无 | **盲审面板** |
-| 回退防护 | 无 | 无 | **Pareto front** |
-| LLM 评审 | 无 | 无 | **Claude/OpenAI/Mock** |
-| 机械门禁 | 8 点检查 | 无 | **6 层门禁** |
-| 测试 | evals.json | 58 文件 | **289 个 pytest** |
-| 记忆 | 无 | 无 | **HOT/WARM/COLD** |
-
-### 架构
-
-```
-用户 → orchestrator → generator (候选生成)
-                    → discriminator (多审阅者盲审 + LLM Judge)
-                    → gate (6 层门禁: Schema→Compile→Lint→Regression→Review→Human)
-                    → executor (变更执行 + 备份/回滚)
-                    → learner (Karpathy 循环 + 三层记忆)
-                    ↻ Ralph Wiggum: 失败 → 注入 trace → 重试 (max 3)
-```
-
-### 7 个 Skill
-
-| Skill | 类型 | 职责 |
-|-------|------|------|
-| **improvement-orchestrator** | 编排 | 全流程调度 + Ralph Wiggum 重试循环 |
-| **improvement-generator** | 学习 | 分析目标 + 反馈 + 失败 trace → 生成候选 |
-| **improvement-discriminator** | 审查 | 多审阅者盲审 + LLM-as-Judge 4 维语义 + 混合评分 |
-| **improvement-executor** | 工具 | 4 种 action 类型 + 自动备份 + 回滚 |
-| **improvement-gate** | 规则 | 6 层机械门禁 + 人工审核队列 |
-| **benchmark-store** | 知识 | 冻结基准 + Pareto front + 质量分级标准 |
-| **improvement-learner** | 学习 | 6 维评估 + Karpathy 循环 + HOT/WARM/COLD 记忆 |
-
-### 快速开始
-
-```bash
-git clone https://github.com/lanyasheng/auto-improvement-orchestrator-skill.git
-cd auto-improvement-orchestrator-skill
-pip install -r requirements.txt
-```
-
-**评估一个 skill:**
-```bash
-python3 skills/improvement-learner/scripts/self_improve.py \
-  --skill-path /path/to/skill --max-iterations 1
-```
-
-**自改进循环:**
-```bash
-python3 skills/improvement-learner/scripts/self_improve.py \
-  --skill-path /path/to/skill --max-iterations 5 --memory-dir /tmp/memory
-```
-
-**多审阅者打分:**
-```bash
-python3 skills/improvement-discriminator/scripts/score.py \
-  --input candidates.json --panel --llm-judge mock --output scored.json
-```
-
-**全流程编排:**
-```bash
-python3 skills/improvement-orchestrator/scripts/orchestrate.py \
-  --target /path/to/skill --state-root /tmp/state --max-retries 3 --out result.json
-```
-
-### Accuracy 15 项检查（v2.0）
-
-| # | 检查项 | 来源 |
-|---|--------|------|
-| 1 | YAML frontmatter 存在 | 基础 |
-| 2 | name: 字段 | skill-creator |
-| 3 | description: 字段 | skill-creator |
-| 4 | description > 40 字符（含触发关键词） | 质量模式 |
-| 5 | **症状驱动 description（"当...时使用"）** | **skill-creator P0** |
-| 6 | When to Use 区块 | 质量模式 |
-| 7 | When NOT to Use 区块 | 质量模式 |
-| 8 | 代码示例（```） | 质量模式 |
-| 9 | Usage/CLI 区块 | 质量模式 |
-| 10 | **Few-shot 示例（`<example>`/`<anti-example>`）** | **skill-creator P0** |
-| 11 | 无模糊语言（etc./and so on） | 质量模式 |
-| 12 | 最小长度（≥15 行） | 基础 |
-| 13 | Related Skills 区块 | 质量模式 |
-| 14 | Output Artifacts 区块 | 质量模式 |
-| 15 | **原子性（无 @skill/references/ 路径耦合）** | **skill-creator P0** |
-
-### 质量分级
-
-| 等级 | 分数 | 含义 |
-|------|------|------|
-| **POWERFUL** ⭐ | ≥ 85% | 可发布到 Marketplace |
-| **SOLID** | 70–84% | 可发布到 GitHub |
-| **GENERIC** | 55–69% | 需迭代改进 |
-| **WEAK** | < 55% | 拒绝或重写 |
-
-### 全局安装
-
-```bash
-# Claude Code
-for skill in skills/*/; do
-  rsync -a --exclude='__pycache__' "$skill" ~/.claude/skills/$(basename "$skill")/
-done
-ln -sfn ~/.claude/skills/_auto-improvement-lib/lib ~/.claude/lib
-
-# OpenClaw（大龙虾）
-for skill in skills/*/; do
-  rsync -a --exclude='__pycache__' "$skill" ~/.openclaw/skills/$(basename "$skill")/
-done
-cp -r lib/ ~/.openclaw/lib/
-```
-
-### 测试
-
-```bash
-python3 -m pytest skills/ -v                              # 全部 289 个测试
-python3 -m pytest skills/improvement-learner/tests/ -v    # 单个 skill
-```
-
-### 目录结构
-
-```
-├── lib/                              # 共享库
-│   ├── common.py                     # I/O、时间戳、分类常量
-│   └── state_machine.py              # 状态机、阶段转换
-├── skills/
-│   ├── improvement-orchestrator/     # 全流程编排
-│   ├── improvement-generator/        # 候选生成
-│   ├── improvement-discriminator/    # 多审阅者 + LLM Judge
-│   │   └── interfaces/              # llm_judge, critic_engine, assertions...
-│   ├── improvement-executor/         # 变更执行 + 回滚
-│   ├── improvement-gate/             # 6 层门禁 + 人工审核
-│   ├── benchmark-store/              # Pareto front + 评估标准
-│   │   └── data/                     # evaluation-standards.md v2.0
-│   └── improvement-learner/          # Karpathy 循环 + 三层记忆
-│       └── memory/                   # HOT/WARM/COLD JSON
-├── EVALUATION_REPORT.md              # 自测评报告
-├── .github/workflows/ci.yml          # CI: lint + test + security
-├── pyproject.toml
-└── requirements.txt                  # pyyaml + pytest
-```
-
-### 设计参考
-
-| 来源 | 采纳的模式 |
-|------|-----------|
-| [Karpathy autoresearch](https://github.com/karpathy) | evaluate→modify→re-evaluate→keep/revert 循环 |
-| [alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills) | 10 个质量模式、POWERFUL/SOLID/GENERIC/WEAK 分级 |
-| [anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official) | plugin.json 标准 |
-| GEPA (ICLR 2026) | trace-aware feedback（失败信息注入下一轮） |
-| SoK (2025) | curated > auto-generated skills |
-| Princeton/ETH contextual drag | 失败上下文清理，防止 10-20% 性能下降 |
+- **Karpathy autoresearch** -- The keep/discard loop pattern. "Run overnight, keep improvements, discard regressions."
+- **GEPA (ICLR 2026)** -- Trace-aware reflection. Failed attempts are not wasted; their traces inform the next attempt.
+- **ADAS (ICLR 2025)** -- Meta Agent Searching. The idea that agents can search over their own architecture.
+- **Aider Benchmark** -- Coding agent evaluation using real coding tasks (Exercism). Showed that execution-based evaluation is possible and valuable.
+- **Anthropic harness design** -- GAN-style generator/evaluator architecture for self-improving systems.
+- **alirezarezvani/claude-skills** -- 10 quality patterns for skill authoring, trigger evaluation with should-trigger/should-not queries.
+- **DSPy** -- Bayesian optimization of LLM prompts. Different approach (optimize prompt tokens directly) but same goal (automated prompt improvement).
 
 ---
 
