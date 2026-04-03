@@ -112,7 +112,7 @@ def test_critic_engine_v2():
 
     # 加载测试套件
     engine.load_benchmark_suite()
-    engine.load_hidden_tests()
+    engine.load_hidden_tests(password="DEMO_ONLY_NOT_FOR_PRODUCTION")
     engine.load_standard_assertions()
 
     # 运行评估

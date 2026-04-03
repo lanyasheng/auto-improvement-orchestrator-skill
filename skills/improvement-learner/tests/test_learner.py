@@ -23,14 +23,10 @@ import pytest
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
-REPO_ROOT = _REPO_ROOT
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-if str(BENCHMARK_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(BENCHMARK_SCRIPTS))
 
 from self_improve import (  # noqa: E402
     ImprovementResult,
@@ -44,7 +40,7 @@ from self_improve import (  # noqa: E402
     revert_to_backup,
     _propose_instruction_improvement,
 )
-from pareto import ParetoFront, ParetoEntry  # noqa: E402
+from lib.pareto import ParetoFront, ParetoEntry  # noqa: E402
 
 
 # ===========================================================================

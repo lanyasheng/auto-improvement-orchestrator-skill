@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gate for the first runnable generic-skill lane.
 
-Includes a 5-layer mechanical validation system that runs BEFORE the
+Includes a 6-layer mechanical validation system that runs BEFORE the
 keep/pending_promote/revert/reject decision logic.
 """
 
@@ -35,7 +35,7 @@ from lib.state_machine import (
 
 
 # ---------------------------------------------------------------------------
-# 5-layer mechanical validation
+# 6-layer mechanical validation
 # ---------------------------------------------------------------------------
 
 
@@ -353,7 +353,7 @@ def main() -> int:
     candidate = load_candidate(ranking_artifact, candidate_id)
     execution_result = execution_artifact.get("result", {})
 
-    # --- 5-layer mechanical validation (runs BEFORE decision logic) ---
+    # --- 6-layer mechanical validation (runs BEFORE decision logic) ---
     selected_layers = select_layers(args.layers)
     layer_verdict = run_gate_layers(candidate, execution_artifact, layers=selected_layers)
 

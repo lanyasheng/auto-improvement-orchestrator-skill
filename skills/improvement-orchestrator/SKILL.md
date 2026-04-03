@@ -37,7 +37,7 @@ propose → discriminate → gate → execute → learn
 
 <example>
 正确用法: 对一个 skill 运行全流程改进
-$ python3 scripts/orchestrate.py --target /path/to/skill --state-root /tmp/state --out result.json
+$ python3 scripts/orchestrate.py --target /path/to/skill --state-root /tmp/state
 → 自动完成: 生成候选 → 多人盲审 → 6层门禁 → 执行变更 → 记录结果
 → 失败时自动注入 trace 重试（最多 3 次）
 </example>
@@ -55,7 +55,7 @@ python3 scripts/orchestrate.py \
   --target /path/to/skill \
   --state-root /path/to/state \
   --max-retries 3 \
-  --out result.json
+  --auto
 ```
 
 ## Output Artifacts

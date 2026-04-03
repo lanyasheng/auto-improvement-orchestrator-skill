@@ -38,17 +38,29 @@ triggers:
 | 5 | **ReviewGate** | Multi-reviewer consensus is not DISPUTED+reject |
 | 6 | **HumanReviewGate** | High-risk candidates require manual approval |
 
+<example>
+正确: gate 返回 pending → 查看待审队列 → 人工审批
+$ python3 scripts/review.py --list --state-root /tmp/state
+→ 显示待审项列表
+$ python3 scripts/review.py --complete REQ_001 --decision approve --reason "低风险文档变更"
+</example>
+
+<anti-example>
+错误: gate 返回 reject 后仍然保留变更
+→ reject 意味着必须回滚。用 improvement-executor 的 rollback 恢复
+</anti-example>
+
 ## CLI
 
 ```bash
-# Run gate validation
-python3 scripts/gate.py --state-root /path/to/state
+# Run gate validation (requires ranking + execution artifacts)
+python3 scripts/gate.py --ranking ranking.json --execution execution.json --output receipt.json
 
 # List pending human reviews
 python3 scripts/review.py --list --state-root /path/to/state
 
 # Complete a review
-python3 scripts/review.py --complete REVIEW_ID --decision approve --comment "LGTM"
+python3 scripts/review.py --complete REVIEW_ID --decision approve --reason "LGTM"
 ```
 
 ## Output Artifacts

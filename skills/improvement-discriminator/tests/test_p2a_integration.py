@@ -355,7 +355,7 @@ def test_critic_v2_p2a_integration():
 
     # 加载标准组件
     engine.load_benchmark_suite()
-    engine.load_hidden_tests()
+    engine.load_hidden_tests(password="DEMO_ONLY_NOT_FOR_PRODUCTION")
     engine.load_standard_assertions()
 
     print(f"✅ Loaded standard components")

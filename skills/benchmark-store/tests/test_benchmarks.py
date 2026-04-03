@@ -25,7 +25,7 @@ from benchmark_db import (  # noqa: E402
     init_db,
     add_benchmark,
 )
-from pareto import ParetoEntry, ParetoFront  # noqa: E402
+from lib.pareto import ParetoEntry, ParetoFront  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

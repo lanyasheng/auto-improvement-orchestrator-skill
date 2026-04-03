@@ -32,7 +32,7 @@ Real Karpathy self-improvement loop: evaluate → modify → re-evaluate → kee
 
 | Dimension | Checks | Pure-text default |
 |-----------|--------|-------------------|
-| **accuracy** | 12 items: frontmatter, pushy description, When to Use/Not, code examples, Usage, no vague language, min length, Related Skills, Output Artifacts | — |
+| **accuracy** | 15 items: frontmatter(3), symptom-driven desc, When to Use/Not, code examples, Usage, few-shot, no vague language, min length, Related Skills, Output Artifacts, atomicity | — |
 | **coverage** | SKILL.md = 60% base + scripts/references/tests/README bonuses | — |
 | **reliability** | pytest pass=1.0, fail=0.5 | 1.0 (pure-text) |
 | **efficiency** | Line count: ≤200=1.0, ≥1200=0.3 | — |

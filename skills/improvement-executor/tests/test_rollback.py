@@ -164,7 +164,7 @@ class TestDryRun:
         target.write_text("modified", encoding="utf-8")
 
         result = rollback.rollback_from_backup(str(backup), str(target), dry_run=True)
-        assert result["status"] == "success"
+        assert result["status"] == "dry_run"
         assert result["dry_run"] is True
         # Target must be unchanged
         assert target.read_text(encoding="utf-8") == "modified"
@@ -198,6 +198,6 @@ class TestDryRun:
         receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
 
         result = rollback.rollback_from_receipt(receipt_path, dry_run=True)
-        assert result["status"] == "success"
+        assert result["status"] == "dry_run"
         assert result["dry_run"] is True
         assert target.read_text(encoding="utf-8") == "v2"

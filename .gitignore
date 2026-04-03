@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ is our shared library, not a Python build artifact
+# lib/
 lib64/
 parts/
 sdist/

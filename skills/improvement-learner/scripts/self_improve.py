@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -26,14 +27,11 @@ from typing import Any
 # Path setup — allow imports from repo root (lib.*) and benchmark-store
 # ---------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_BENCHMARK_SCRIPTS = _REPO_ROOT / "skills" / "benchmark-store" / "scripts"
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
-if str(_BENCHMARK_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_BENCHMARK_SCRIPTS))
 
 from lib.common import read_json, write_json, utc_now_iso  # noqa: E402
-from pareto import ParetoFront, ParetoEntry  # noqa: E402
+from lib.pareto import ParetoFront, ParetoEntry  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -177,13 +175,16 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     has_references = (skill_path / "references").exists()
     has_readme = (skill_path / "README.md").exists()
 
+    # Read SKILL.md ONCE and reuse throughout (was reading 4 times)
+    skill_md_content = ""
+    if has_skill_md:
+        skill_md_content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+
     # Coverage: SKILL.md is the only hard requirement.
-    # Optional dirs (scripts/, references/, tests/) add bonus points.
-    # references/ is expected when SKILL.md > 500 lines.
     if not has_skill_md:
         scores["coverage"] = 0.0
     else:
-        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        content = skill_md_content
         lines = len(content.split("\n"))
         base = 0.6  # SKILL.md exists = 60%
         bonus = 0.0
@@ -205,7 +206,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     # Accuracy: SKILL.md quality (granular 0.0-1.0 scoring)
     # Sources: skill-creator P0 rules + alirezarezvani/claude-skills patterns.
     if has_skill_md:
-        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        content = skill_md_content
         content_lower = content.lower()
         acc_checks = []
 
@@ -257,7 +258,6 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 
         # --- skill-creator P0: atomicity (no path coupling) ---
         # 15. No direct path references to other skills' internals
-        import re
         path_coupling = re.search(r'@[\w-]+/(references|scripts|assets)/', content)
         acc_checks.append(path_coupling is None)
 
@@ -294,7 +294,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     # uses "password" parameters, "secrets" module, etc.)
     sec_checks = []
     if has_skill_md:
-        skill_content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        skill_content = skill_md_content
         skill_lower = skill_content.lower()
         # SKILL.md should not contain actual secrets
         sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
@@ -328,7 +328,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     # trigger evaluation pattern with 10 should-trigger + 10 should-not queries)
     trig_checks: list[bool] = []
     if has_skill_md:
-        content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
+        content = skill_md_content
         if content.startswith("---") and content.count("---") >= 2:
             fm = content.split("---", 2)[1]
             desc_lines = [l for l in fm.split("\n") if l.strip().startswith("description:")]
@@ -341,9 +341,9 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             trig_checks.append("triggers:" in fm)
             # 4. Has disambiguation (mentions what NOT to use for)
             desc_lower = desc_text.lower()
-            trig_checks.append(any(w in desc_lower for w in ["not for", "don't use", "instead use", "不适用"]))
+            trig_checks.append(any(w in desc_lower for w in ["not for", "don't use", "instead use", "不适用", "不用于"]))
             # 5. Description mentions related/similar skills for disambiguation
-            trig_checks.append(any(w in desc_lower for w in ["related", "see also", "关联", "参见"]))
+            trig_checks.append(any(w in desc_lower for w in ["related", "see also", "关联", "参见", "用 ", "(用"]))
         else:
             trig_checks = [False] * 5
     else:

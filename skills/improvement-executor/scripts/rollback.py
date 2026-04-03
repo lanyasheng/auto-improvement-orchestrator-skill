@@ -126,7 +126,7 @@ def rollback_from_receipt(receipt_path: Path, dry_run: bool = False) -> dict:
         }
     
     result = {
-        "status": "success" if dry_run else "success",
+        "status": "dry_run" if dry_run else "success",
         "action": "rollback",
         "target_path": str(target_file),
         "backup_path": str(backup_file),
@@ -171,7 +171,7 @@ def rollback_from_backup(backup_path: str, target_path: str, dry_run: bool = Fal
         }
     
     result = {
-        "status": "success" if dry_run else "success",
+        "status": "dry_run" if dry_run else "success",
         "action": "rollback",
         "target_path": str(target_file),
         "backup_path": str(backup_file),

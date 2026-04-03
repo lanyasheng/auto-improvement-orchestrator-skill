@@ -33,17 +33,28 @@ Previous failure on "accuracy" dimension
   → skip strategies that failed ≥3 times on this dimension
 ```
 
+<example>
+正确: 第一次失败后注入 trace 重试
+$ python3 scripts/propose.py --target /path/to/skill --trace failure_trace.json --output candidates.json
+→ 生成的候选会自动避开上次失败的 accuracy 维度策略
+</example>
+
+<anti-example>
+错误: 同一个维度失败 3 次后还继续重试
+→ generator 会自动跳过失败 ≥3 次的策略，返回 None。此时应换维度或停止
+</anti-example>
+
 ## CLI
 
 ```bash
 # Basic generation
-python3 scripts/propose.py --target /path/to/skill --out candidates.json
+python3 scripts/propose.py --target /path/to/skill --output candidates.json
 
 # With failure trace (retry loop)
-python3 scripts/propose.py --target /path/to/skill --trace failure.json --out candidates.json
+python3 scripts/propose.py --target /path/to/skill --trace failure.json --output candidates.json
 
-# With memory patterns
-python3 scripts/propose.py --target /path/to/skill --feedback patterns.json --out candidates.json
+# With memory/feedback sources
+python3 scripts/propose.py --target /path/to/skill --source memory.json --output candidates.json
 ```
 
 ## Output Artifacts

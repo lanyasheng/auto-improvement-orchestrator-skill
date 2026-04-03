@@ -504,7 +504,7 @@ class CriticEngineV2:
         if password:
             self._hidden_suite.unlock(password)
         else:
-            self._hidden_suite.unlock("demo_password_123")
+            raise ValueError("password is required to unlock hidden test suite")
 
         if self.config.verbose:
             metadata = self._hidden_suite.get_metadata()
@@ -682,7 +682,7 @@ class CriticEngineV2:
                 input_data={"task": f"test_{test_id}", "data": [1, 2, 3]},
                 expected_output={"status": "success"},
                 validator={"type": "contains", "threshold": 0.8, "keywords": ["success"]},
-                password="demo_password_123",
+                password="DEMO_ONLY_NOT_FOR_PRODUCTION",
                 test_type=test_type,
                 category=category,
                 difficulty=difficulty,
@@ -1091,6 +1091,8 @@ def run_p1_demo():
         benchmark_weight=0.4,
         hidden_test_weight=0.3,
         assertion_weight=0.3,
+        regression_weight=0.0,
+        human_review_weight=0.0,
         verbose=True,
         use_mock_evaluator=True,  # 演示模式使用 mock
     )

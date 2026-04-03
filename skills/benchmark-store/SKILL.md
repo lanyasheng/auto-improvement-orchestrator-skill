@@ -44,11 +44,28 @@ ParetoFront.check_regression(new_scores) → {"regressed": bool, "regressions": 
 # 5% tolerance — minor fluctuations allowed
 ```
 
+<example>
+正确: 检查 Pareto front 是否有回退
+$ python3 -c "from lib.pareto import ParetoFront; pf = ParetoFront('state/pareto.json'); print(pf.check_regression({'accuracy': 0.9, 'coverage': 0.8}))"
+→ {"regressed": false, "regressions": []}  # 无回退，可以接受
+</example>
+
+<anti-example>
+错误: 用 benchmark-store 给候选打分
+→ benchmark-store 只存数据，打分用 improvement-discriminator
+</anti-example>
+
 ## CLI
 
 ```bash
-python3 scripts/benchmark_db.py --init --db benchmarks.db
-python3 scripts/benchmark_db.py --compare --skill /path/to/skill --category general
+# List benchmarks
+python3 scripts/benchmark_db.py --action list --db-path benchmarks.db
+
+# Compare skill against baselines
+python3 scripts/benchmark_db.py --action compare --skill-path /path/to/skill --category general --db-path benchmarks.db
+
+# Add a benchmark
+python3 scripts/benchmark_db.py --action add --category general --test-name "test1" --db-path benchmarks.db
 ```
 
 ## Output Artifacts

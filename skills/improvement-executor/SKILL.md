@@ -35,11 +35,22 @@ Applies accepted candidates with automatic backup and rollback.
 | `insert_before_section` | Insert content before a matched heading |
 | `update_yaml_frontmatter` | Merge fields into YAML frontmatter |
 
+<example>
+正确: 先 dry-run 预览，确认无误再执行
+$ python3 scripts/rollback.py --receipt receipt.json --dry-run
+→ 查看回滚内容，确认后去掉 --dry-run 执行
+</example>
+
+<anti-example>
+错误: 跳过 discriminator 直接执行
+→ executor 只应处理已通过评分的候选，未评分的直接执行可能破坏目标文件
+</anti-example>
+
 ## CLI
 
 ```bash
-# Apply
-python3 scripts/execute.py --candidate candidate.json --state-root /path/to/state --out result.json
+# Apply (requires ranking artifact + candidate ID)
+python3 scripts/execute.py --input ranking.json --candidate-id CANDIDATE_ID --output result.json
 
 # Rollback
 python3 scripts/rollback.py --receipt receipt.json
