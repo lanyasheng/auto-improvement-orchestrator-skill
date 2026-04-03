@@ -142,17 +142,19 @@ class TestEvaluateSkillDimensions:
         scores = evaluate_skill_dimensions(skill)
         assert scores["coverage"] == 0.6  # SKILL.md only = base 60%
         assert scores["reliability"] == 1.0  # pure-text → default 1.0
-        assert scores["accuracy"] >= 0.6
+        assert scores["accuracy"] >= 0.4  # 20 checks now, pure-text passes ~10
 
     def test_full_structure_scores_high(self, tmp_path):
         skill = tmp_path / "good-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
             "---\nname: test\n"
-            "description: 当需要运行测试评估、检查 skill 质量评分时使用。Use when you want to evaluate quality.\n"
+            "description: 当需要运行测试评估、检查 skill 质量评分时使用。Use when you want to evaluate quality. 不用于手动打分（用 discriminator）。\n"
             "license: MIT\n---\n\n# Good Skill\n\n"
-            "## When to Use\n- Testing\n\n## When NOT to Use\n- Production\n\n"
+            "## When to Use\n- Testing\n\n## When NOT to Use\n- Production. 不要用于生产环境。\n\n"
+            "## Pipeline\n\n### Step 1: Evaluate\nMUST run evaluation first. 如果不确定，confirm with user.\n\n"
             "## CLI\n\n```bash\npython3 run.py\n```\n\n"
+            "Priority: accuracy 高于 efficiency.\n\n"
             "<example>\nCorrect: run with --skill-path\n</example>\n\n"
             "## Output Artifacts\n\n| Request | Deliverable |\n|---------|------------|\n"
             "| Run tests | JSON report |\n\n"

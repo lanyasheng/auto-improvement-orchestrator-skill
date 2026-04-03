@@ -111,7 +111,7 @@ class TestMultiReviewerConsensus:
 
         assert result["cognitive_label"] == "CONSENSUS"
         assert result["final_recommendation"] == "accept_for_execution"
-        assert len(result["panel_reviews"]) == 2
+        assert len(result["panel_reviews"]) >= 2
         assert all(
             r["recommendation"] == "accept_for_execution"
             for r in result["panel_reviews"]

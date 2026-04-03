@@ -90,24 +90,32 @@ DEFAULT_REVIEWERS = [
     ReviewerConfig(
         "structural",
         category_weights={
-            "docs": 5.0,
-            "reference": 4.0,
-            "guardrail": 4.0,
-            "workflow": 2.0,
-            "prompt": 1.5,
-            "tests": 2.0,
+            "docs": 5.0, "reference": 4.0, "guardrail": 4.0,
+            "workflow": 2.0, "prompt": 1.5, "tests": 2.0,
         },
     ),
     ReviewerConfig(
         "conservative",
         risk_sensitivity=1.5,
         category_weights={
-            "docs": 3.0,
-            "reference": 3.0,
-            "guardrail": 5.0,
-            "workflow": 1.0,
-            "prompt": 0.5,
-            "tests": 1.0,
+            "docs": 3.0, "reference": 3.0, "guardrail": 5.0,
+            "workflow": 1.0, "prompt": 0.5, "tests": 1.0,
+        },
+    ),
+    ReviewerConfig(
+        "user_advocate",
+        risk_sensitivity=0.8,
+        category_weights={
+            "docs": 4.0, "reference": 2.0, "guardrail": 2.0,
+            "workflow": 4.0, "prompt": 3.0, "tests": 1.0,
+        },
+    ),
+    ReviewerConfig(
+        "security_auditor",
+        risk_sensitivity=2.0,
+        category_weights={
+            "docs": 2.0, "reference": 2.0, "guardrail": 5.0,
+            "workflow": 0.5, "prompt": 0.5, "tests": 3.0,
         },
     ),
 ]

@@ -261,6 +261,23 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         path_coupling = re.search(r'@[\w-]+/(references|scripts|assets)/', content)
         acc_checks.append(path_coupling is None)
 
+        # --- System prompts research: prompt engineering patterns ---
+        # 16. Severity tiers: uses MUST/NEVER/IMPORTANT for hard constraints
+        severity_markers = ["must", "never", "important", "必须", "禁止", "不可"]
+        acc_checks.append(any(m in content_lower for m in severity_markers))
+        # 17. Phase gates: defines workflow phases or steps with entry/exit
+        phase_markers = ["## phase", "## step", "## 阶段", "### step", "pipeline", "workflow"]
+        acc_checks.append(any(m in content_lower for m in phase_markers))
+        # 18. Override hierarchy: specifies priority when rules conflict
+        priority_markers = ["priority", "优先", "override", "覆盖", "precedence", "高于"]
+        acc_checks.append(any(m in content_lower for m in priority_markers))
+        # 19. Escalation criteria: when to stop and ask vs proceed
+        escalation_markers = ["ask the user", "询问", "confirm", "确认", "stop if", "如果不确定"]
+        acc_checks.append(any(m in content_lower for m in escalation_markers))
+        # 20. Anti-sycophancy: guards against AI-default filler/validation
+        anti_filler = ["不要", "avoid", "do not", "don't add", "skip", "不需要"]
+        acc_checks.append(any(m in content_lower for m in anti_filler))
+
         scores["accuracy"] = sum(acc_checks) / len(acc_checks)
 
         lines = len(content.split("\n"))
@@ -352,6 +369,92 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     scores["trigger_quality"] = sum(trig_checks) / len(trig_checks) if trig_checks else 0.0
 
     return scores
+
+
+# ---------------------------------------------------------------------------
+# Multi-role evaluation (4 perspectives)
+# ---------------------------------------------------------------------------
+
+# Role-specific dimension weights
+ROLE_WEIGHTS: dict[str, dict[str, float]] = {
+    "user": {
+        # User cares: can I find this skill? can I use it quickly?
+        "accuracy": 0.20, "coverage": 0.10, "reliability": 0.10,
+        "efficiency": 0.15, "security": 0.05, "trigger_quality": 0.40,
+    },
+    "developer": {
+        # Developer cares: is the code solid? are there tests?
+        "accuracy": 0.15, "coverage": 0.20, "reliability": 0.30,
+        "efficiency": 0.15, "security": 0.10, "trigger_quality": 0.10,
+    },
+    "security_auditor": {
+        # Security auditor cares: secrets? dangerous patterns? license?
+        "accuracy": 0.10, "coverage": 0.10, "reliability": 0.15,
+        "efficiency": 0.05, "security": 0.50, "trigger_quality": 0.10,
+    },
+    "architect": {
+        # Architect cares: structure? progressive disclosure? atomicity?
+        "accuracy": 0.30, "coverage": 0.25, "reliability": 0.10,
+        "efficiency": 0.25, "security": 0.05, "trigger_quality": 0.05,
+    },
+}
+
+ROLE_LABELS = {
+    "user": "User (findability + usability)",
+    "developer": "Developer (code quality + tests)",
+    "security_auditor": "Security Auditor (secrets + safety)",
+    "architect": "Architect (structure + design)",
+}
+
+
+def evaluate_skill_multi_role(skill_path: Path) -> dict[str, Any]:
+    """Evaluate a skill from 4 different role perspectives.
+
+    Returns a dict with per-role scores, consensus label, and overall.
+    Uses the same base dimensions from evaluate_skill_dimensions()
+    but applies role-specific weights.
+    """
+    base_scores = evaluate_skill_dimensions(skill_path)
+    role_results: dict[str, dict[str, Any]] = {}
+
+    for role, weights in ROLE_WEIGHTS.items():
+        weighted = sum(base_scores.get(dim, 0) * w for dim, w in weights.items())
+        pct = round(weighted * 100, 1)
+        if pct >= 85:
+            tier = "POWERFUL"
+        elif pct >= 70:
+            tier = "SOLID"
+        elif pct >= 55:
+            tier = "GENERIC"
+        else:
+            tier = "WEAK"
+        role_results[role] = {
+            "score": pct,
+            "tier": tier,
+            "label": ROLE_LABELS[role],
+            "weights": weights,
+        }
+
+    # Consensus: all agree on tier?
+    tiers = [r["tier"] for r in role_results.values()]
+    unique_tiers = set(tiers)
+    if len(unique_tiers) == 1:
+        consensus = "CONSENSUS"
+    elif len(unique_tiers) == 2:
+        consensus = "MOSTLY_AGREED"
+    else:
+        consensus = "DISPUTED"
+
+    # Overall: average of all role scores
+    avg = round(sum(r["score"] for r in role_results.values()) / len(role_results), 1)
+
+    return {
+        "base_scores": {k: round(v, 3) for k, v in base_scores.items()},
+        "role_scores": role_results,
+        "consensus": consensus,
+        "overall": avg,
+        "overall_tier": "POWERFUL" if avg >= 85 else "SOLID" if avg >= 70 else "GENERIC" if avg >= 55 else "WEAK",
+    }
 
 
 # ---------------------------------------------------------------------------
