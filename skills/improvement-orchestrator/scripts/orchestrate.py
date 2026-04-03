@@ -28,6 +28,7 @@ from lib.common import read_json, utc_now_iso, write_json
 
 GENERATOR_SCRIPT = REPO_ROOT / "skills" / "improvement-generator" / "scripts" / "propose.py"
 DISCRIMINATOR_SCRIPT = REPO_ROOT / "skills" / "improvement-discriminator" / "scripts" / "score.py"
+EVALUATOR_SCRIPT = REPO_ROOT / "skills" / "improvement-evaluator" / "scripts" / "evaluate.py"
 EXECUTOR_SCRIPT = REPO_ROOT / "skills" / "improvement-executor" / "scripts" / "execute.py"
 GATE_SCRIPT = REPO_ROOT / "skills" / "improvement-gate" / "scripts" / "gate.py"
 
@@ -163,6 +164,46 @@ def run_executor(
     return read_json(Path(artifact_path))
 
 
+def run_evaluator(
+    ranking_artifact_path: str,
+    candidate_id: str,
+    state_root: str,
+    task_suite: str | None = None,
+    eval_threshold: float = 6.0,
+) -> dict[str, Any] | None:
+    """Call evaluate.py if a task suite exists for the target skill.
+
+    Returns evaluation artifact dict, or None if skipped (no task suite
+    or evaluator script not found).
+    """
+    if not EVALUATOR_SCRIPT.exists():
+        print("  Evaluator: skipped (script not found)")
+        return None
+    cmd = [
+        sys.executable,
+        str(EVALUATOR_SCRIPT),
+        "--input", str(ranking_artifact_path),
+        "--candidate-id", candidate_id,
+        "--state-root", str(state_root),
+        "--eval-threshold", str(eval_threshold),
+        "--mock",  # Default to mock mode; remove for real evaluation
+    ]
+    if task_suite:
+        cmd.extend(["--task-suite", str(task_suite)])
+    try:
+        artifact_path = _run_script(cmd, "evaluator")
+        result = read_json(Path(artifact_path))
+        verdict = result.get("verdict", "skipped")
+        if verdict == "skipped":
+            print("  Evaluator: skipped (no task suite)")
+            return None
+        print(f"  Evaluator: {verdict} (pass_rate={result.get('evaluation_results', {}).get('execution_pass_rate', 'N/A')})")
+        return result
+    except RuntimeError as exc:
+        print(f"  Evaluator: error ({exc}), continuing without evaluation")
+        return None
+
+
 def run_gate(
     ranking_artifact_path: str,
     execution_artifact_path: str,
@@ -273,6 +314,28 @@ def run_pipeline(
             break
 
         candidate_id = best["id"]
+
+        # 3.5 EVALUATE (optional — skipped if no task suite or evaluator not installed)
+        eval_result = run_evaluator(
+            ranking_artifact_path,
+            candidate_id,
+            state_root,
+        )
+        if eval_result and eval_result.get("verdict") == "fail":
+            # Evaluation failed — treat as revert and retry
+            trace = {
+                "type": "evaluation_failure_trace",
+                "candidate_id": candidate_id,
+                "evaluation_results": eval_result.get("evaluation_results", {}),
+                "timestamp": utc_now_iso(),
+            }
+            trace_dir = Path(state_root) / "traces"
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            trace_path = trace_dir / f"eval-trace-{candidate_id}.json"
+            write_json(trace_path, trace)
+            active_sources.append(str(trace_path))
+            print(f"  Evaluation failed, retrying ({attempt}/{max_retries})")
+            continue
 
         # 4. EXECUTE
         execution_artifact = run_executor(

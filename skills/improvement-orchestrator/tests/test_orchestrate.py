@@ -301,10 +301,16 @@ def _mock_subprocess_side_effects(
 
 
 class TestRunPipeline:
+    # Patch EVALUATOR_SCRIPT to a non-existent path so run_evaluator() skips
+    # (the evaluator is optional and returns None when script doesn't exist).
+    _no_evaluator = patch.object(
+        orchestrate, "EVALUATOR_SCRIPT", Path("/nonexistent/evaluate.py"),
+    )
+
     def test_keep_on_first_attempt(self, tmp_state):
         side_effect = _mock_subprocess_side_effects(tmp_state, ["keep"])
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=side_effect):
             summary = orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=[],
@@ -321,7 +327,7 @@ class TestRunPipeline:
             tmp_state, ["revert", "keep"],
         )
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=side_effect):
             summary = orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=[],
@@ -341,7 +347,7 @@ class TestRunPipeline:
             tmp_state, ["pending_promote"],
         )
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=side_effect):
             summary = orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=[],
@@ -357,7 +363,7 @@ class TestRunPipeline:
             tmp_state, ["reject"],
         )
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=side_effect):
             summary = orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=[],
@@ -373,7 +379,7 @@ class TestRunPipeline:
             tmp_state, ["revert", "revert", "revert"],
         )
 
-        with patch("subprocess.run", side_effect=side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=side_effect):
             summary = orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=[],
@@ -424,7 +430,7 @@ class TestRunPipeline:
                 call_log["proposer_sources"].append(sources_in_cmd)
             return original_side_effect(cmd, **kwargs)
 
-        with patch("subprocess.run", side_effect=tracking_side_effect):
+        with self._no_evaluator, patch("subprocess.run", side_effect=tracking_side_effect):
             orchestrate.run_pipeline(
                 target="/fake/target",
                 sources=["/original/source.md"],

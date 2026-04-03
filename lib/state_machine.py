@@ -93,7 +93,8 @@ def init_state_files(paths: dict[str, Path]) -> None:
 def next_step_for_stage(stage: str) -> tuple[str, str]:
     mapping = {
         "proposed": ("rank_candidates", "critic"),
-        "ranked": ("execute_candidate", "executor"),
+        "ranked": ("evaluate_candidate", "evaluator"),
+        "evaluated": ("execute_candidate", "executor"),
         "executed": ("apply_gate", "gate"),
         "gated_keep": ("propose_candidates", "proposer"),
         "gated_pending": ("human_promote_review", "human"),

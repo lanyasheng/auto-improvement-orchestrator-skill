@@ -77,8 +77,13 @@ class TestStateMachine:
         assert step == "rank_candidates"
         assert owner == "critic"
 
-    def test_ranked_goes_to_executor(self):
+    def test_ranked_goes_to_evaluator(self):
         step, owner = next_step_for_stage("ranked")
+        assert step == "evaluate_candidate"
+        assert owner == "evaluator"
+
+    def test_evaluated_goes_to_executor(self):
+        step, owner = next_step_for_stage("evaluated")
         assert step == "execute_candidate"
         assert owner == "executor"
 
@@ -179,10 +184,11 @@ class TestUpdateState:
         stages = [
             ("proposed", "completed"),
             ("ranked", "completed"),
+            ("evaluated", "completed"),
             ("executed", "completed"),
             ("gated_keep", "completed"),
         ]
-        expected_owners = ["critic", "executor", "gate", "proposer"]
+        expected_owners = ["critic", "evaluator", "executor", "gate", "proposer"]
 
         for (stage, status), expected_owner in zip(stages, expected_owners):
             update_state(
