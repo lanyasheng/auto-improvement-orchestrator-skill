@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Orchestrator dispatch for the auto-improvement pipeline.
 
-Coordinates the full PROPOSE → DISCRIMINATE → GATE → EXECUTE → GATE loop
+Coordinates the full PROPOSE → DISCRIMINATE → EVALUATE → EXECUTE → GATE loop
 with Ralph Wiggum-style retry: on revert, capture a structured failure trace
 and feed it back into the next proposal round.
 """
@@ -71,7 +71,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def run_script(script_path, args, label):
     """Run a role script and return the artifact path it produced."""
     cmd = [sys.executable, str(script_path)] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600)
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} failed (exit {result.returncode}):\n"
@@ -97,7 +97,7 @@ def _run_script(cmd: list[str], label: str) -> str:
 
     Raises RuntimeError on non-zero exit.
     """
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} failed (exit {result.returncode}):\n"
@@ -285,7 +285,7 @@ def run_pipeline(
     state_root: str,
     max_retries: int = 3,
 ) -> dict[str, Any]:
-    """Run the full PROPOSE → DISCRIMINATE → EXECUTE → GATE loop.
+    """Run the full PROPOSE → DISCRIMINATE → EVALUATE → EXECUTE → GATE loop.
 
     Returns a summary dict with the final outcome.
     """

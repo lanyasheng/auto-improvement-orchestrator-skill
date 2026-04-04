@@ -7,10 +7,10 @@
 
 ## 1. 总览
 
-当前实现采用四角色顺序推进：
+当前实现采用五角色顺序推进（与 SKILL.md 一致）：
 
 ```text
-Proposer -> Critic -> Executor -> Gate
+Generator -> Discriminator -> Evaluator -> Executor -> Gate
 ```
 
 但重点不只是脚本能跑，而是**每一步都会落本地 artifact**，形成可被后续 control plane 消费的状态推进链。

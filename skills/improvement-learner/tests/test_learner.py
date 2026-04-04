@@ -156,6 +156,11 @@ class TestEvaluateSkillDimensions:
             "## CLI\n\n```bash\npython3 run.py\n```\n\n"
             "Priority: accuracy 高于 efficiency.\n\n"
             "<example>\nCorrect: run with --skill-path\n</example>\n\n"
+            "<anti-example>\nWrong: run without path\n</anti-example>\n\n"
+            "### 禁止行为\n- ❌ Skip evaluation\n- ❌ Ignore failures\n\n"
+            "### 正确做法\n- ✅ Run full pipeline\n- ✅ Check all dims\n\n"
+            "MUST run evaluation before reporting.\n"
+            "即使 scores look good, NEVER skip verification.\n\n"
             "## Output Artifacts\n\n| Request | Deliverable |\n|---------|------------|\n"
             "| Run tests | JSON report |\n\n"
             "## Related Skills\n\n- **benchmark-store**: For frozen benchmarks\n",

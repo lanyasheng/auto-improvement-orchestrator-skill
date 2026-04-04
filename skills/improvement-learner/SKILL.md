@@ -89,5 +89,5 @@ python3 scripts/track_progress.py --skill-path /path/to/skill --output progress.
 ## Related Skills
 
 - **improvement-discriminator**: Semantic scoring (LLM judge); learner focuses on structural quality
-- **improvement-orchestrator**: Full pipeline; learner is stage 5
+- **improvement-orchestrator**: Full pipeline; learner provides standalone quality scoring used by autoloop-controller and self-improvement loop (not a stage in the orchestrator pipeline)
 - **benchmark-store**: Pareto front data shared between learner and benchmark-store

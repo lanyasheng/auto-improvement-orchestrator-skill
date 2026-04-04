@@ -60,6 +60,15 @@ class PytestJudge(BaseJudge):
 
         skill_root = Path(__file__).resolve().parents[1]
         test_path = skill_root / "tests" / test_file
+        # Security: resolve symlinks and prevent traversal (e.g. fixtures/../../)
+        resolved = test_path.resolve()
+        fixtures_root = (skill_root / "tests" / "fixtures").resolve()
+        if not str(resolved).startswith(str(fixtures_root)):
+            return {
+                "passed": False,
+                "details": "SECURITY: path traversal detected",
+                "score": 0.0,
+            }
         if not test_path.exists():
             return {
                 "passed": False,

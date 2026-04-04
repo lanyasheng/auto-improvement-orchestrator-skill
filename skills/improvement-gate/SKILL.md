@@ -9,6 +9,8 @@ triggers:
   - human review
   - 门禁验证
   - 待审批
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Gate
@@ -75,5 +77,5 @@ python3 scripts/review.py --complete REVIEW_ID --decision approve --reason "LGTM
 
 - **improvement-discriminator**: Scores candidates before gate
 - **improvement-executor**: Applies changes before gate validates
-- **improvement-orchestrator**: Calls gate as stage 3
+- **improvement-orchestrator**: Calls gate as stage 5
 - **benchmark-store**: Pareto front data for RegressionGate

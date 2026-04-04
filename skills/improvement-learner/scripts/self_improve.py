@@ -904,7 +904,7 @@ def commit_change(skill_path: Path, message: str) -> None:
     """Attempt a git commit (best-effort, non-fatal)."""
     try:
         subprocess.run(
-            ["git", "add", "-A"],
+            ["git", "add", "SKILL.md", "references/", "scripts/", "tests/"],
             cwd=str(skill_path), capture_output=True, timeout=10,
         )
         subprocess.run(

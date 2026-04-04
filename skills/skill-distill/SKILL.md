@@ -2,7 +2,7 @@
 name: skill-distill
 description: |
   当需要把多个功能重叠的 skill 合并为一个蒸馏版 skill 时使用。
-  不适用于从 skills 提取 rules（用 rules-distill）或从 session 历史提取 skills（用 distill CLI）。
+  不适用于从 skills 提取 rules（rules extraction is a separate capability from ECC's rules-distill skill, not part of this repo）或从 session 历史提取 skills（用 distill CLI）。
 license: MIT
 triggers:
   - 蒸馏.*skill
@@ -18,7 +18,7 @@ triggers:
 
 把 N 个功能重叠的 skill 合并为 1 个蒸馏版 skill。
 
-与 `rules-distill`（skills → rules）和 `nclandrei/distill`（sessions → skills）不同，本 skill 的输入和输出都是 skill：skills → skill。
+与 rules extraction（a separate capability from ECC's `rules-distill` skill, not part of this repo）和 `nclandrei/distill`（sessions → skills）不同，本 skill 的输入和输出都是 skill：skills → skill。
 
 ## When to Use
 
@@ -28,7 +28,7 @@ triggers:
 
 ## When NOT to Use
 
-- 从 skills 提取跨领域原则到 rules（用 `rules-distill`）
+- 从 skills 提取跨领域原则到 rules（rules extraction is a separate capability from ECC's `rules-distill` skill, not part of this repo）
 - 从 session 历史提取重复模式为 skill（用 distill CLI / `skill-create`）
 - 优化单个 skill 的质量（用 `improvement-orchestrator`）
 
@@ -195,7 +195,7 @@ Step 3: (可选) 如有 task_suite.yaml → 跑 evaluator 执行验证
 
 - `skill-creator` — 单个 skill 的创建规范
 - `skill-forge` — 从 spec 自动生成 skill + task_suite
-- `rules-distill` — 从 skills 提取 rules（不是合并 skills）
+- `rules-distill` (external, from ECC) — 从 skills 提取 rules（不是合并 skills, not part of this repo）
 - `improvement-orchestrator` — 优化单个 skill 的质量
 
 ## References

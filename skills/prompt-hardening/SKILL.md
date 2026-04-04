@@ -17,6 +17,7 @@ triggers:
   - rule enforcement
   - prompt compliance
   - agent disobeys
+author: OpenClaw Team
 ---
 
 # Prompt Hardening
@@ -96,7 +97,7 @@ triggers:
 
 ```bash
 # 审计现有 prompt（16 项检查）
-~/.openclaw/skills/prompt-hardening/scripts/audit.sh ~/path/to/SOUL.md
+~/.claude/skills/prompt-hardening/scripts/audit.sh ~/path/to/SOUL.md
 ```
 
 ## 应用清单
