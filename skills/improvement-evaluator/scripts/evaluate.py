@@ -79,6 +79,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", help="Output path for evaluation artifact JSON")
     parser.add_argument("--eval-threshold", type=float, default=6.0, help="Minimum discriminator score to evaluate")
     parser.add_argument("--mock", action="store_true", help="Use mock execution (no claude CLI needed)")
+    parser.add_argument("--skill-path", help="Path to SKILL.md or skill directory (standalone mode: prepend to prompts)")
     return parser.parse_args(argv)
 
 
@@ -324,8 +325,19 @@ def main(argv: list[str] | None = None) -> int:
         runner = TaskRunner(mock=args.mock)
         run_id = f"standalone-{suite.get('skill_id', 'unknown')}"
 
+        # Load skill content if --skill-path provided
+        skill_content = ""
+        if args.skill_path:
+            sp = Path(args.skill_path).expanduser().resolve()
+            skill_md = sp / "SKILL.md" if sp.is_dir() else sp
+            if skill_md.exists():
+                skill_content = skill_md.read_text(encoding="utf-8")
+                logger.info("Loaded SKILL.md from %s (%d chars)", skill_md, len(skill_content))
+            else:
+                logger.warning("SKILL.md not found at %s, running without skill content", skill_md)
+
         logger.info("Running %d tasks in standalone mode...", len(tasks))
-        results = run_task_suite(runner, "", tasks, pass_k=args.pass_k)
+        results = run_task_suite(runner, skill_content, tasks, pass_k=args.pass_k)
         pass_rate = compute_pass_rate(results)
 
         output_path = _resolve_output(args.output, state_root, run_id)

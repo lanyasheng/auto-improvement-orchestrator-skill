@@ -268,98 +268,143 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         if lines > 500 and not has_references:
             scores["coverage"] = max(0.3, scores["coverage"] - 0.2)
 
-    # Accuracy: SKILL.md quality (granular 0.0-1.0 scoring)
-    # Sources: skill-creator P0 rules + alirezarezvani/claude-skills patterns.
+    # Accuracy: SKILL.md quality scoring.
+    #
+    # Architecture: Two-tier scoring based on empirical correlation analysis
+    # (R²=0.064 experiment, 2026-04-04).
+    #
+    # Tier 1 "table stakes": binary gate checks that all reasonable skills
+    # pass. These set a floor (0.4 if all pass) but don't differentiate.
+    #
+    # Tier 2 "execution-predictive": checks that actually correlate with
+    # evaluator pass rate. These drive the remaining 0.6 of the score.
+    #
+    # Design: structural presence checks (has frontmatter, has section X)
+    # showed zero correlation with actual skill effectiveness. Checks that
+    # measure *how well the skill guides AI behavior* are predictive.
     if has_skill_md:
         content = skill_md_content
         content_lower = content.lower()
-        acc_checks = []
 
-        # --- Frontmatter (skill-creator: name+description required) ---
-        # 1. Has YAML frontmatter?
-        acc_checks.append(content.startswith("---"))
+        # Parse frontmatter once
         fm_section = ""
         if content.startswith("---") and content.count("---") >= 2:
             fm_section = content.split("---", 2)[1]
-        # 2. name: field
-        acc_checks.append("name:" in fm_section if fm_section else False)
-        # 3. description: field
-        acc_checks.append("description:" in fm_section if fm_section else False)
-
-        # --- skill-creator P0: symptom-driven description ---
-        # 4. Description uses symptoms/scenarios, not just capabilities (>40 chars)
         desc_text = _extract_description_text(fm_section) if fm_section else ""
-        acc_checks.append(bool(desc_text and len(desc_text) > 40))
-        # 5. Description contains symptom keywords (当...时, 需要, 想要, use when)
         desc_lower = desc_text.lower()
-        symptom_kw = ["当", "需要", "想要", "use when", "want to", "如果"]
-        acc_checks.append(any(kw in desc_lower for kw in symptom_kw))
+        lines = len(content.split("\n"))
 
-        # --- Structure sections ---
-        # 6. Has "When to Use" section?
-        acc_checks.append("## when to use" in content_lower or "## 何时使用" in content_lower)
-        # 7. Has "When NOT to Use" section?
-        acc_checks.append("## when not to use" in content_lower or "## 不应该使用" in content_lower)
-        # 8. Has code examples?
-        acc_checks.append("```" in content)
-        # 9. Has usage/CLI section?
-        acc_checks.append(any(s in content for s in ["## CLI", "## Quick Start", "## Usage", "## 使用"]))
+        # ===== TIER 1: Table stakes (binary gate → 0.4 floor) =====
+        # If any of these fail, accuracy is capped at 0.3.
+        gate_checks = [
+            content.startswith("---"),                    # has frontmatter
+            "name:" in fm_section if fm_section else False,
+            "description:" in fm_section if fm_section else False,
+            bool(desc_text and len(desc_text) > 20),      # non-trivial description
+            lines >= 15,                                  # not a stub
+        ]
+        gate_pass = all(gate_checks)
 
-        # --- skill-creator P0: few-shot for evaluator/reviewer skills ---
-        # 10. Has <example> or <anti-example> tags (required for evaluator/reviewer skills)
-        acc_checks.append("<example>" in content or "<anti-example>" in content)
+        # ===== TIER 2: Execution-predictive checks (scored) =====
+        # These measure whether the skill provides actionable guidance
+        # that helps an AI actually complete tasks correctly.
+        exec_checks = []
 
-        # --- Quality patterns ---
-        # 11. No vague language (practitioner voice)?
-        vague = ["etc.", "and so on", "and more", "various things", "you might consider"]
-        acc_checks.append(not any(v in content_lower for v in vague))
-        # 12. Reasonable length (not too short)?
-        acc_checks.append(len(content.split("\n")) >= 15)
-        # 13. Has related skills / references section?
-        acc_checks.append(any(s in content for s in ["## Related", "## 关联", "## References", "## 参考"]))
-        # 14. Has output artifacts or deliverables section?
-        acc_checks.append(any(s in content_lower for s in ["## output", "## 输出", "artifact", "deliverable"]))
+        # --- E1. Workflow/decision structure (r=+0.80 in correlation study) ---
+        # Skills with clear step sequences or decision trees perform better
+        phase_markers = ["## phase", "## step", "## 阶段", "### step",
+                         "pipeline", "workflow", "步骤", "流程", "阶段"]
+        exec_checks.append(any(m in content_lower for m in phase_markers))
 
-        # --- skill-creator P0: atomicity (no path coupling) ---
-        # 15. No direct path references to other skills' internals
-        path_coupling = re.search(r'@[\w-]+/(references|scripts|assets)/', content)
-        acc_checks.append(path_coupling is None)
-
-        # --- System prompts research: prompt engineering patterns ---
-        # 16. Severity tiers: uses MUST/NEVER/IMPORTANT for hard constraints
-        severity_markers = ["must", "never", "important", "必须", "禁止", "不可"]
-        acc_checks.append(any(m in content_lower for m in severity_markers))
-        # 17. Phase gates: defines workflow phases or steps with entry/exit
-        phase_markers = ["## phase", "## step", "## 阶段", "### step", "pipeline", "workflow"]
-        acc_checks.append(any(m in content_lower for m in phase_markers))
-        # 18. Override hierarchy: specifies priority when rules conflict
-        priority_markers = ["priority", "优先", "override", "覆盖", "precedence", "高于"]
-        acc_checks.append(any(m in content_lower for m in priority_markers))
-        # 19. Escalation criteria: when to stop and ask vs proceed
-        escalation_markers = ["ask the user", "询问", "confirm", "确认", "stop if", "如果不确定"]
-        acc_checks.append(any(m in content_lower for m in escalation_markers))
-        # 20. Anti-sycophancy: guards against AI-default filler/validation
-        anti_filler = ["不要", "avoid", "do not", "don't add", "skip", "不需要"]
-        acc_checks.append(any(m in content_lower for m in anti_filler))
-
-        # --- Prompt hardening checks (from prompt-hardening skill P1/P3/P5/P7) ---
-        # 21. P1 Triple reinforcement: MUST/NEVER used with example+anti-example pair
-        has_severity = any(m in content_lower for m in ["must", "never", "必须", "禁止"])
-        has_example_pair = "<example>" in content and "<anti-example>" in content
-        acc_checks.append(has_severity and has_example_pair)
-        # 22. P3 Exhaustive negation: ❌/✅ lists for prohibited/allowed behaviors
-        has_both_emoji = ("❌" in content and "✅" in content)
-        has_section_header = bool(re.search(r'^#{1,4}\s.*禁止行为', content, re.MULTILINE))
-        acc_checks.append(has_both_emoji or has_section_header)
-        # 23. P5 Anti-reasoning: preempts model rationalization of violations
-        # Require proximity: generic phrases like "even if" must appear within 200 chars of MUST/NEVER/禁止
-        has_anti_reasoning = bool(
-            re.search(r'(must|never|禁止).{0,200}(即使|even if|even when|no exceptions|没有例外|不是借口|not an excuse|这正是|this is exactly)', content_lower)
-            or re.search(r'(即使|even if|even when|no exceptions|没有例外|不是借口|not an excuse|这正是|this is exactly).{0,200}(must|never|禁止)', content_lower)
+        # --- E2. Conditional logic (if X then Y) ---
+        # Skills that provide branching guidance help AI handle edge cases
+        conditional_patterns = [
+            r'if\s+.*(?:then|→|->)',        # if ... then
+            r'当.*时.*(?:应该|必须|需要)',     # 当...时...应该
+            r'├──|└──',                      # decision tree formatting
+            r'\bwhen\b.*(?:must|should|use)', # when ... must
+        ]
+        has_conditionals = any(
+            bool(re.search(p, content_lower)) for p in conditional_patterns
         )
-        acc_checks.append(has_anti_reasoning)
+        exec_checks.append(has_conditionals)
 
-        scores["accuracy"] = sum(acc_checks) / len(acc_checks)
+        # --- E3. Concrete output specification ---
+        # Skills that define what "done" looks like (format, structure, deliverables)
+        output_spec_markers = [
+            r'```\s*\n.*?(output|result|format|模板|格式)',  # code block with output
+            r'## output',
+            r'## 输出',
+            r'returns?\s*:',                               # "Returns: ..."
+            r'deliverable',
+        ]
+        has_output_spec = any(
+            bool(re.search(p, content_lower)) for p in output_spec_markers
+        )
+        exec_checks.append(has_output_spec)
+
+        # --- E4. Severity tiers with context ---
+        # Not just "has MUST" (all skills have it) but MUST/NEVER with
+        # specific consequence or reason attached
+        severity_with_reason = bool(re.search(
+            r'(must|never|禁止|必须).{0,100}(because|otherwise|否则|原因|导致|会|将)',
+            content_lower
+        ))
+        exec_checks.append(severity_with_reason)
+
+        # --- E5. Actionable anti-patterns ---
+        # Skills that say what NOT to do with specific alternatives
+        has_antipattern = bool(re.search(
+            r'(不要|do not|don\'t|avoid|禁止).{0,100}(instead|而是|应该|use|用)',
+            content_lower
+        ))
+        exec_checks.append(has_antipattern)
+
+        # --- E6. Escalation criteria ---
+        # When should AI stop and ask vs proceed? Reduces failure modes.
+        escalation_markers = ["ask the user", "询问", "stop if", "如果不确定",
+                              "confirm with", "确认", "不确定时"]
+        exec_checks.append(any(m in content_lower for m in escalation_markers))
+
+        # --- E7. Symptom-driven description (routing quality) ---
+        # Description uses trigger scenarios, not just capability list
+        symptom_kw = ["当", "需要", "想要", "use when", "want to", "如果"]
+        exec_checks.append(any(kw in desc_lower for kw in symptom_kw))
+
+        # --- E8. Concrete examples with I/O ---
+        # Examples that show specific input → output, not just "use correctly"
+        example_blocks = re.findall(r'<example>(.*?)</example>', content, re.DOTALL)
+        code_blocks = re.findall(r'```[^\n]*\n(.*?)```', content, re.DOTALL)
+        all_examples = example_blocks + code_blocks
+        has_concrete_example = any(
+            len(block.strip()) > 50 and  # substantive, not a stub
+            any(kw in block.lower() for kw in ["→", "->", "output", "result",
+                                                "returns", "produces", "输出"])
+            for block in all_examples
+        )
+        exec_checks.append(has_concrete_example)
+
+        # --- E9. Disambiguation in description ---
+        # Description says what skill is NOT for (routing clarity)
+        has_disambiguation = any(
+            w in desc_lower for w in ["不适用", "不用于", "not for",
+                                      "don't use for", "instead use", "参见"]
+        ) if desc_text else False
+        exec_checks.append(has_disambiguation)
+
+        # --- E10. No path coupling (atomicity) ---
+        # Skill doesn't reference other skills' internal structure
+        path_coupling = re.search(r'@[\w-]+/(references|scripts|assets)/', content)
+        exec_checks.append(path_coupling is None)
+
+        # --- Score computation ---
+        if not gate_pass:
+            # Failed table stakes → capped at 0.3
+            scores["accuracy"] = 0.3
+        else:
+            # Gate passed (0.4 floor) + execution checks (up to 0.6)
+            exec_score = sum(exec_checks) / len(exec_checks) if exec_checks else 0
+            scores["accuracy"] = 0.4 + 0.6 * exec_score
 
         lines = len(content.split("\n"))
         if lines > 0:
