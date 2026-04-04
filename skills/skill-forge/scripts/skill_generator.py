@@ -60,7 +60,7 @@ def generate_skill_from_spec(spec: dict) -> str:
                 f"- When you specifically need {ref} capabilities instead\n"
             )
 
-    # Examples from quality_criteria
+    # Examples from quality_criteria (P7 behavior anchoring from prompt-hardening)
     quality = spec.get("quality_criteria", [])
     if quality:
         criteria_desc = "; ".join(
@@ -72,13 +72,28 @@ def generate_skill_from_spec(spec: dict) -> str:
             f"Correct usage: Apply {name} to produce output meeting "
             f"quality criteria: {criteria_desc}\n"
         )
+        sections.append("reasoning: These criteria ensure the output is "
+                        "usable without manual correction.\n")
         sections.append("</example>\n")
         sections.append("\n<anti-example>\n")
         sections.append(
             f"Incorrect: Producing output that violates quality criteria "
             f"({criteria_desc})\n"
         )
+        sections.append("reasoning: Violating these criteria means the output "
+                        "needs manual rework, defeating the purpose of the skill.\n")
         sections.append("</anti-example>\n")
+
+    # P1 Triple reinforcement for critical constraints
+    critical = spec.get("critical_constraints", [])
+    if critical:
+        sections.append("\n## Critical Constraints\n")
+        for constraint in critical:
+            sections.append(f"\nMUST: {constraint}\n")
+        sections.append(
+            f"\nI REPEAT: The above constraints are non-negotiable. "
+            f"NEVER skip or rationalize around them.\n"
+        )
 
     # Domain knowledge
     domain = spec.get("domain_knowledge", [])

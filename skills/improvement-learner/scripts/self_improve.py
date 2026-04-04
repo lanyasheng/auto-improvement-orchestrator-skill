@@ -147,6 +147,71 @@ class ThreeLayerMemory:
 
 
 # ---------------------------------------------------------------------------
+# Frontmatter parsing helpers
+# ---------------------------------------------------------------------------
+
+def _extract_description_text(fm_section: str) -> str:
+    """Extract full description text from YAML frontmatter, handling both
+    inline and multiline (| or >) formats.
+
+    Examples:
+        description: "inline text"        → "inline text"
+        description: inline text          → "inline text"
+        description: |                    → "line1\nline2\n..."
+          line1
+          line2
+        description: >                   → "line1 line2 ..."
+          line1
+          line2
+    """
+    lines = fm_section.split("\n")
+    desc_text = ""
+    in_multiline = False
+    multiline_indent = 0
+    joiner = " "  # default: folded (>)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("description:"):
+            after_key = stripped[len("description:"):].strip()
+            if after_key in ("|", "|+", "|-"):
+                # Literal block scalar — preserve newlines
+                in_multiline = True
+                joiner = "\n"
+                for j in range(i + 1, len(lines)):
+                    if lines[j].strip():
+                        multiline_indent = len(lines[j]) - len(lines[j].lstrip())
+                        break
+                continue
+            elif after_key in (">", ">+", ">-"):
+                # Folded block scalar — join with spaces
+                in_multiline = True
+                joiner = " "
+                for j in range(i + 1, len(lines)):
+                    if lines[j].strip():
+                        multiline_indent = len(lines[j]) - len(lines[j].lstrip())
+                        break
+                continue
+            elif ((after_key.startswith('"') and after_key.endswith('"')) or
+                  (after_key.startswith("'") and after_key.endswith("'"))):
+                # Quoted inline — strip only outermost quotes
+                desc_text = after_key[1:-1]
+                break
+            else:
+                # Unquoted inline
+                desc_text = after_key
+                break
+        elif in_multiline:
+            if stripped == "" or (len(line) - len(line.lstrip()) >= multiline_indent and multiline_indent > 0):
+                desc_text += line.strip() + joiner
+            else:
+                # Dedent means end of multiline block
+                break
+
+    return desc_text.strip()
+
+
+# ---------------------------------------------------------------------------
 # Skill evaluation — real, not random
 # ---------------------------------------------------------------------------
 
@@ -223,8 +288,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 
         # --- skill-creator P0: symptom-driven description ---
         # 4. Description uses symptoms/scenarios, not just capabilities (>40 chars)
-        desc_lines = [l for l in fm_section.split("\n") if l.strip().startswith("description:")] if fm_section else []
-        desc_text = desc_lines[0] if desc_lines else ""
+        desc_text = _extract_description_text(fm_section) if fm_section else ""
         acc_checks.append(bool(desc_text and len(desc_text) > 40))
         # 5. Description contains symptom keywords (当...时, 需要, 想要, use when)
         desc_lower = desc_text.lower()
@@ -277,6 +341,23 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         # 20. Anti-sycophancy: guards against AI-default filler/validation
         anti_filler = ["不要", "avoid", "do not", "don't add", "skip", "不需要"]
         acc_checks.append(any(m in content_lower for m in anti_filler))
+
+        # --- Prompt hardening checks (from prompt-hardening skill P1/P3/P5/P7) ---
+        # 21. P1 Triple reinforcement: MUST/NEVER used with example+anti-example pair
+        has_severity = any(m in content_lower for m in ["must", "never", "必须", "禁止"])
+        has_example_pair = "<example>" in content and "<anti-example>" in content
+        acc_checks.append(has_severity and has_example_pair)
+        # 22. P3 Exhaustive negation: ❌/✅ lists for prohibited/allowed behaviors
+        has_both_emoji = ("❌" in content and "✅" in content)
+        has_section_header = bool(re.search(r'^#{1,4}\s.*禁止行为', content, re.MULTILINE))
+        acc_checks.append(has_both_emoji or has_section_header)
+        # 23. P5 Anti-reasoning: preempts model rationalization of violations
+        # Require proximity: generic phrases like "even if" must appear within 200 chars of MUST/NEVER/禁止
+        has_anti_reasoning = bool(
+            re.search(r'(must|never|禁止).{0,200}(即使|even if|even when|no exceptions|没有例外|不是借口|not an excuse|这正是|this is exactly)', content_lower)
+            or re.search(r'(即使|even if|even when|no exceptions|没有例外|不是借口|not an excuse|这正是|this is exactly).{0,200}(must|never|禁止)', content_lower)
+        )
+        acc_checks.append(has_anti_reasoning)
 
         scores["accuracy"] = sum(acc_checks) / len(acc_checks)
 
@@ -348,12 +429,14 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         content = skill_md_content
         if content.startswith("---") and content.count("---") >= 2:
             fm = content.split("---", 2)[1]
-            desc_lines = [l for l in fm.split("\n") if l.strip().startswith("description:")]
-            desc_text = desc_lines[0] if desc_lines else ""
+            # Use the multiline-aware description extractor
+            desc_text = _extract_description_text(fm)
             # 1. Description exists and is non-trivial (>30 chars)
             trig_checks.append(len(desc_text) > 30)
-            # 2. Description contains trigger keywords/phrases
-            trig_checks.append(len(desc_text) > 50)
+            # 2. Description contains action verbs or scenario keywords (quality, not just length)
+            action_verbs = ["当", "需要", "生成", "检查", "修复", "分析", "优化", "创建", "运行", "验证",
+                            "when", "generate", "check", "fix", "analyze", "optimize", "create", "run", "use"]
+            trig_checks.append(any(v in desc_text.lower() for v in action_verbs))
             # 3. Has 'triggers:' field with explicit trigger list
             trig_checks.append("triggers:" in fm)
             # 4. Has disambiguation (mentions what NOT to use for)

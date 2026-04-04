@@ -17,6 +17,7 @@ class SkillSpec:
     quality_criteria: list[dict] = field(default_factory=list)
     domain_knowledge: list[str] = field(default_factory=list)
     reference_skills: list[str] = field(default_factory=list)
+    critical_constraints: list[str] = field(default_factory=list)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "SkillSpec":
