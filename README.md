@@ -2,7 +2,9 @@
 
 Closed-loop pipeline that evaluates, improves, and continuously optimizes AI Agent Skills.
 
-**10 skills | 5,000+ lines Python | 427+ tests | pyyaml + pytest only**
+**11 skills | 4,500+ lines Python | 360+ tests | pyyaml + pytest only**
+
+Two demo skills (prompt-hardening, deslop) serve as end-to-end evaluation/improvement targets.
 
 ---
 
@@ -32,7 +34,7 @@ This project solves three problems:
 
 ## Architecture
 
-The system is built as 10 independent skills that compose into a pipeline. Each skill is a standalone CLI tool with its own tests, and the orchestrator chains them together.
+The system is built as 11 independent skills that compose into a pipeline. Each skill is a standalone CLI tool with its own tests, and the orchestrator chains them together. The system uses a two-tier LLM evaluation: learner (LLM-as-judge, ~$0.5/eval, lint role) + evaluator (LLM execution via `claude -p`, ~$3/eval, test role).
 
 ```
                         +-----------+
@@ -179,6 +181,10 @@ The real Karpathy self-improvement loop. Each iteration:
 5. Re-evaluate
 6. Keep if Pareto-accepted (no dimension regressed), revert otherwise
 7. Record outcome in HOT/WARM/COLD memory
+
+**Two-tier evaluation architecture** (learner = lint, evaluator = test):
+
+The accuracy dimension uses **LLM-as-judge** (~$0.5/eval) instead of regex checks. Experiment 5 showed that regex structural checks have R²=0.00 correlation with actual execution effectiveness. The LLM-as-judge scores 5 dimensions via `claude -p`: clarity, specificity, completeness, actionability, differentiation. A `--mock` flag provides regex fallback for testing without API costs.
 
 The learner also supports **multi-role evaluation**: the same skill is scored from 4 perspectives (User, Developer, Security Auditor, Architect) with different dimension weights. This prevents optimizing for one stakeholder at the expense of another.
 
@@ -338,19 +344,6 @@ An append-only `iteration_log.jsonl` provides a full audit trail.
 
 ---
 
-## Stage 8: Forge (`skill-forge`)
-
-Generates new Skills from requirements OR generates task_suite.yaml for existing Skills. Two modes:
-
-- `--from-skill /path/to/skill` -- Analyze existing SKILL.md, generate task_suite.yaml
-- `--from-spec spec.yaml` -- Generate complete Skill + task suite from structured requirements
-
-The forge extracts test scenarios from 5 sources in a SKILL.md: description, when-to-use bullets, `<example>` tags, `<anti-example>` tags, and output artifacts tables. It assigns judge types (ContainsJudge or LLMRubricJudge) and caps at 10 tasks per suite.
-
-This completes the full lifecycle: **forge -> evaluate -> improve -> continuously optimize**.
-
----
-
 ## Real Experiment Results
 
 These results are from running the system on a real project with 28 AI coding skills.
@@ -432,6 +425,99 @@ Average improvement: **+0.138** (from GENERIC to SOLID tier).
 Total cost: approximately $15-20 in API calls for all 4 skills combined.
 
 The 2/3 and 1/3 kept/total ratios are healthy -- they mean the gate and Pareto front are working. Candidates that regressed any dimension were correctly reverted.
+
+### Experiment 5: Learner-Evaluator Correlation Analysis (P2)
+
+**Question: Does the learner's structural scoring predict actual execution effectiveness?**
+
+We ran the evaluator's task suites (with real `claude -p` execution and SKILL.md prepended) on 5 skills, then computed Pearson correlation against the learner's dimension scores.
+
+**Data:**
+
+| Skill | Learner Accuracy | Learner WS | Evaluator Pass Rate |
+|-------|-----------------|------------|-------------------|
+| deslop | 0.88 | 0.754 | 100% (7/7) |
+| skill-creator | 0.70 | 0.715 | 100% (7/7) |
+| prompt-hardening | 0.88 | 0.802 | 86% (6/7) |
+| skill-distill | 0.88 | 0.756 | 86% (6/7) |
+| improvement-gate | 0.76 | 0.754 | 71% (5/7) |
+
+**Result: R² = 0.00, Pearson r = -0.0001 (accuracy vs pass rate)**
+
+The learner's accuracy dimension has **zero predictive power** for evaluator pass rate. The overall weighted score fares slightly better at r = -0.40 but in the **wrong direction** (higher learner score → lower pass rate).
+
+**Per-check analysis** (26 original accuracy checks):
+- 17/26 checks (65%) had **no variance** — all 5 skills passed, providing zero discrimination
+- 3 checks were **anti-predictive** (passing them correlated with *lower* pass rates):
+  - `version` in frontmatter (r=-0.76)
+  - References files exist (r=-0.54)
+  - Examples contain specific I/O (r=-0.54)
+- Only 1 check positively predicted pass rate: `Has workflow/steps` (r=+0.80)
+
+**After refactoring** to a two-tier system (5 gate checks + 10 execution-predictive checks), accuracy correlation remained at r = -0.0001. This confirms:
+
+> **Structural analysis of SKILL.md cannot predict execution effectiveness.** A skill with "poor" structure (missing sections, no version field) can still guide Claude perfectly — and a "well-structured" skill can still fail on real tasks.
+
+The fundamental gap is between *document quality* (does the SKILL.md look right?) and *guidance quality* (does the SKILL.md actually change Claude's behavior?). The evaluator's task suites are the only thing that measures guidance quality, but they have their own circularity problem (see Known Limitations below).
+
+**Implication for the pipeline:** The learner's accuracy score should NOT be used as a predictor of evaluator pass rate. Instead:
+1. Use evaluator pass rate as the primary quality signal
+2. Use learner scores only for structural hygiene (table stakes)
+3. Build the user feedback loop (see below) for real-world signal
+
+### Experiment 6: Prompt-hardening three-way comparison
+
+**Question: Does a Skill actually make Claude perform better on real tasks?**
+
+We ran the prompt-hardening task suite (7 tasks) in two configurations using `claude -p` with real LLM execution:
+
+- **Group A**: No skill (bare Claude, no SKILL.md injected)
+- **Group B**: v1 prompt-hardening SKILL.md injected as context
+
+| Task | Group A (No Skill) | Group B (v1 Skill) |
+|------|----|----|
+| P1 triple reinforcement | PASS | PASS |
+| P5 anti-reasoning | PASS | PASS |
+| Audit output format (/16) | **PASS** | **FAIL** (missing `/16`) |
+| CLI reference (audit.sh) | **FAIL** (doesn't know audit.sh) | **PASS** |
+| Pattern selection | PASS | PASS |
+| Reliability levels | PASS | PASS |
+| End-to-end hardening | PASS | PASS |
+| **Pass Rate** | **86% (6/7)** | **86% (6/7)** |
+
+**Key finding: same pass rate, different failures.**
+
+The skill adds value where it provides specific knowledge (CLI command path), but changes AI behavior in ways that cause a different failure (output format). This has three implications:
+
+1. **Skill value is in knowledge injection, not general ability uplift.** Claude already knows MUST/NEVER patterns and anti-reasoning blocks. The skill's value is specific: `audit.sh` path, P1-P16 numbering system, reliability percentages.
+
+2. **Skills can introduce new failure modes.** Group B fails on audit output format because the skill shifts Claude's output preferences -- it focuses on patterns but drops the `/16` denominator. Every skill change is a tradeoff.
+
+3. **Pass rate alone is insufficient.** Per-task comparison reveals behavior differences that aggregate metrics hide. Future evaluation should track which tasks improve/regress with each skill version.
+
+### Known Limitations
+
+#### P1: Evaluator Circularity
+
+The evaluator's task suites are created by the same author who writes the SKILL.md. This creates circular reasoning:
+
+```
+Author writes SKILL.md → Author writes task_suite.yaml → Evaluator tests SKILL.md against task_suite.yaml
+```
+
+A skilled author naturally writes tasks that test what the skill teaches. An unskilled author writes tasks that are too easy or miss real failure modes. The evaluator grade reflects **authoring consistency**, not **absolute quality**.
+
+Evidence from Experiment 5: `skill-creator` has the lowest structural score (0.70) but 100% pass rate. This likely means the task suite is well-aligned with what the skill does — but tells us nothing about whether the skill would handle *unexpected* or *adversarial* inputs.
+
+**Mitigation strategies** (not yet implemented):
+1. **Cross-pollination**: Have the generator create adversarial tasks that try to break a skill
+2. **User feedback**: Real user corrections are the only independent signal (see User Feedback Loop design)
+3. **Held-out tasks**: Split task suites into training (used during improvement) and test (only used for final evaluation)
+4. **Community task suites**: Third parties contribute tasks without seeing the SKILL.md
+
+#### P3: Small Sample Size
+
+With N=5 skills, the correlation analysis has low statistical power. A single outlier (skill-creator at 100% pass rate despite low structural score) can dominate the results. More skills need to be evaluated before drawing definitive conclusions.
 
 ---
 
@@ -681,14 +767,6 @@ skills/
     interfaces/              # Frozen benchmark, hidden tests
     tests/
 
-  skill-forge/               # Stage 8: Skill + task suite generator
-    scripts/forge.py
-    scripts/task_suite_generator.py
-    scripts/skill_generator.py
-    interfaces/              # Spec schema, templates
-    references/              # Forge architecture
-    tests/
-
 lib/
   common.py                  # Shared utilities (read_json, write_json, timestamps)
   pareto.py                  # ParetoFront + ParetoEntry
@@ -722,6 +800,263 @@ These weights are adjustable per skill category (tool, knowledge, orchestration,
 - **Anthropic harness design** -- GAN-style generator/evaluator architecture for self-improving systems.
 - **alirezarezvani/claude-skills** -- 10 quality patterns for skill authoring, trigger evaluation with should-trigger/should-not queries.
 - **DSPy** -- Bayesian optimization of LLM prompts. Different approach (optimize prompt tokens directly) but same goal (automated prompt improvement).
+
+---
+
+## User Feedback Loop (Design)
+
+### Problem
+
+The existing evaluator measures skill effectiveness via synthetic task suites -- predefined prompts with mechanical judges. This catches structural gaps but misses real-world failure modes that only surface during actual use. A skill might pass all 7 task suite tests yet consistently produce output that users correct in practice.
+
+We need a feedback signal derived from **actual user behavior** in Claude Code sessions.
+
+### Architecture
+
+```
+~/.claude/projects/**/*.jsonl          distill (existing)
+         |                                  |
+         v                                  v
+  +------------------+              +----------------+
+  | session-analyzer |              | pattern-index  |
+  | (new component)  |              | (distill's DB) |
+  +--------+---------+              +-------+--------+
+           |                                |
+           v                                |
+  +-----------------+                       |
+  | feedback-store  |  <--------------------+
+  | feedback.jsonl  |    distill can write
+  +--------+--------+    correction patterns
+           |              into the same store
+           v
+  +--------------------+
+  | correction_rate    |--- per-skill metric
+  | by skill+dimension |
+  +--------+-----------+
+           |
+           v
+  +-------------------+       +-------------------+
+  | improvement-      |       | autoloop-         |
+  | generator         |       | controller        |
+  | (existing Stage 1)|       | (existing)        |
+  +-------------------+       +-------------------+
+  reads correction_rate        uses correction_rate
+  to prioritize which         as termination signal
+  dimensions to fix           (plateau = users
+                              stopped correcting)
+```
+
+### Data Collection
+
+#### Source: Claude Code session JSONL
+
+Each session is a file at `~/.claude/projects/{project-hash}/{session-id}.jsonl`. Lines are JSON objects with these relevant fields:
+
+```jsonc
+// Skill invocation (assistant turn)
+{
+  "type": "assistant",
+  "message": {
+    "content": [{
+      "type": "tool_use",
+      "name": "Skill",             // <-- skill trigger signal
+      "input": { "skill": "cpp-expert", "args": "..." },
+      "id": "toolu_xxx"
+    }]
+  },
+  "uuid": "aaa-bbb",
+  "timestamp": "2026-04-04T08:00:00Z"
+}
+
+// Slash-command skill invocation (system entry)
+{
+  "type": "system",
+  "subtype": "local_command",
+  "content": "<command-name>/code-review</command-name>...",
+  "uuid": "ccc-ddd",
+  "timestamp": "..."
+}
+
+// User message (potential correction or acceptance)
+{
+  "type": "user",
+  "message": { "role": "user", "content": "不对，应该用X而不是Y" },
+  "uuid": "eee-fff",
+  "parentUuid": "aaa-bbb",     // links to prior assistant turn
+  "timestamp": "..."
+}
+```
+
+#### Skill trigger detection
+
+A "skill invocation event" is detected when either:
+
+1. An assistant message contains `tool_use` with `name == "Skill"` -- extract `input.skill` as the skill name.
+2. A system message with `subtype == "local_command"` contains a `<command-name>` matching a known skill slash-command.
+
+Both produce an `invocation_id` (the message UUID) and a `skill_id`.
+
+#### Correction vs. acceptance detection
+
+After a skill invocation, scan forward through subsequent messages in the same session to classify the outcome. The "influence window" extends from the skill invocation until 3 user turns later or the next skill invocation, whichever comes first.
+
+**Correction signals** (negative -- user overrides AI output):
+
+| Pattern | Detection | Confidence |
+|---------|-----------|------------|
+| Explicit rejection | User message contains negation keywords: "不对", "错了", "wrong", "no", "不是这样" | High |
+| Direction override | User rewrites the AI's output via their own edit (detectable when next user message contains code/text that contradicts the AI's prior output) | Medium |
+| Immediate redo request | User says "重新来", "redo", "try again", "换个方案" within 1 turn | High |
+| Revert signal | `git checkout`/`git restore` in a Bash tool_use within 2 turns after AI made file edits | High |
+| Partial correction | User accepts some output but corrects specific parts: "这个可以，但是X应该改成Y" | Medium (counted as 0.5 correction) |
+
+**Acceptance signals** (positive -- user proceeds without correction):
+
+| Pattern | Detection |
+|---------|-----------|
+| Silent continuation | User's next message changes topic or gives new task (no correction of prior output) |
+| Explicit approval | "好", "可以", "looks good", "对的", "继续" |
+| Build on output | User takes AI output and extends it (references AI's generated names/code in their next request) |
+
+**Ambiguous (excluded from metrics)**:
+
+- User asks clarifying question (neither acceptance nor correction)
+- Session ends immediately after skill invocation (no signal)
+- AI self-corrects before user responds (not a user feedback signal)
+
+### Extracted Event Schema
+
+```jsonc
+// Written to feedback-store/feedback.jsonl (append-only)
+{
+  "event_id": "sha256-of-session+invocation_uuid",
+  "timestamp": "2026-04-04T08:05:00Z",
+  "session_id": "90d58f86-...",
+  "project": "NanoCompose",
+  "skill_id": "cpp-expert",
+  "invocation_uuid": "aaa-bbb",
+  "outcome": "correction",        // "correction" | "acceptance" | "partial"
+  "confidence": 0.9,              // how sure we are about the classification
+  "correction_type": "rejection", // "rejection" | "override" | "redo" | "revert" | "partial"
+  "user_message_snippet": "不对，应该...",  // first 200 chars, for debugging
+  "turns_to_feedback": 1,         // how many user turns after invocation
+  "ai_tools_used": ["Read", "Edit", "Bash"],  // what AI did after skill load
+  "dimension_hint": null          // optional: which quality dimension was corrected
+}
+```
+
+### Metrics
+
+#### Primary metric: `correction_rate`
+
+```
+correction_rate(skill) = (corrections + 0.5 * partials) / total_invocations
+```
+
+Where `total_invocations` = corrections + partials + acceptances (excludes ambiguous).
+
+#### Edge cases
+
+| Edge case | Handling |
+|-----------|----------|
+| Skill triggered but not used (loaded then ignored) | If AI makes no tool calls after skill load within 3 turns, exclude from metrics. Detectable: no `Read`/`Edit`/`Bash` tool_use between skill invocation and next user message. |
+| Multi-turn corrections | Only count the first correction signal within the influence window. Subsequent corrections about the same topic count as one event. |
+| Multiple skills in one turn | Attribute correction to the most recently invoked skill before the correction. If ambiguous, attribute to all active skills with `confidence *= 0.5`. |
+| Skill invoked by subagent | Subagent sessions live in `{session-id}/subagents/agent-*.jsonl`. Process identically but tag `context: "subagent"`. Subagent corrections are from the orchestrator (not the user) -- lower weight (0.3x). |
+| Very low sample size | Do not compute `correction_rate` until a skill has >= 5 invocations with signal. Below that threshold, report "insufficient data". |
+
+#### Derived metrics
+
+```
+correction_trend(skill, window=30d) = correction_rate(last_30d) - correction_rate(prior_30d)
+                                      // positive = getting worse
+                                      // negative = improving
+
+hotspot_dimensions(skill) = group corrections by dimension_hint
+                            // e.g., "cpp-expert: 60% of corrections are about naming"
+```
+
+### Dimension attribution
+
+When a correction occurs, attempt to classify which of the 6 evaluator dimensions it maps to:
+
+| Correction content pattern | Dimension |
+|---------------------------|-----------|
+| Naming, formatting, style complaints | accuracy |
+| "Missing X", "didn't consider Y" | coverage |
+| Repeated similar corrections across sessions | reliability |
+| "Too slow", "too many steps", "too verbose" | efficiency |
+| Security-related corrections | security |
+| Wrong skill triggered, wrong workflow chosen | trigger_quality |
+
+This attribution is heuristic (keyword + LLM classification on the 200-char snippet). When unsure, set `dimension_hint = null`.
+
+### Integration with Improvement Pipeline
+
+#### 1. As generator input signal
+
+The improvement-generator already reads "feedback signals" from files. Add `feedback-store/feedback.jsonl` as a new source:
+
+```
+improvement-generator --target /path/to/skill --source feedback-store/feedback.jsonl
+```
+
+The generator reads corrections for the target skill, groups by dimension, and prioritizes improvement candidates that address the most-corrected dimensions.
+
+#### 2. As evaluator dimension
+
+Add `user_correction_rate` as a 7th dimension to the benchmark-store Pareto front:
+
+```
+Existing:  accuracy, coverage, reliability, efficiency, security, trigger_quality
+New:       + user_correction_rate (weight: 25%, sourced from feedback-store)
+```
+
+The Pareto front's regression gate then enforces: an "improvement" that increases task suite pass rate but worsens user correction rate is rejected.
+
+**Bootstrap problem**: New/changed skills have no user feedback yet. Use the existing 6-dimension score as a proxy until >= 5 real invocations accumulate. `user_correction_rate` weight ramps linearly from 0% (0 invocations) to 25% (>= 20 invocations).
+
+#### 3. As autoloop-controller signal
+
+Add a new termination condition to autoloop-controller:
+
+```python
+# New condition: user feedback plateau
+# If correction_rate has not decreased over the last N improvement iterations,
+# the autoloop is not helping real users -- stop and flag for human review.
+def detect_user_feedback_plateau(feedback_store, skill_id, iterations):
+    rates = [compute_correction_rate(skill_id, after=iter.timestamp)
+             for iter in iterations[-3:]]
+    return all(r >= rates[0] * 0.95 for r in rates[1:])
+```
+
+Also: autoloop-controller should prefer improving skills with the **highest correction_rate** when choosing which skill to target next in batch mode.
+
+#### 4. Integration with distill
+
+distill already watches `~/.claude/projects/**/*.jsonl` and extracts patterns. Two integration options:
+
+**Option A (preferred): distill writes to feedback-store directly.** distill's pattern extraction already identifies repeated user corrections. Add a distill output mode that writes correction events in the schema above to `feedback-store/feedback.jsonl`. The session-analyzer component becomes optional -- distill handles the parsing.
+
+**Option B: Independent processing.** session-analyzer runs as a separate cron job, parses JSONL independently of distill. Simpler to implement but duplicates the JSONL parsing work that distill already does.
+
+### Privacy and Scope
+
+- **Local only**: All data stays in `~/.claude/` and the project's `feedback-store/` directory. No external telemetry, no network calls.
+- **User message snippets**: Capped at 200 characters, used only for dimension attribution debugging. Can be disabled with `--no-snippets` flag.
+- **No PII extraction**: The analyzer never extracts full user messages, file contents, or code. Only metadata (skill name, outcome, timestamp) and short snippets.
+- **Opt-out**: A `.claude/feedback-config.json` with `{"enabled": false}` disables all collection.
+- **Data retention**: feedback.jsonl entries older than 90 days are archived to `feedback-store/archive/` and excluded from active metrics.
+
+### Key Design Decisions
+
+**Why not use the existing evaluator task suites for this?** Task suites test known scenarios. User feedback catches unknown scenarios -- the gap between what we tested and what users actually do. They are complementary, not substitutes.
+
+**Why append-only JSONL (not SQLite)?** Matches the session log format. Easy to grep, tail, and debug. distill already processes JSONL. SQLite adds a dependency for no benefit at the expected scale (~100-1000 events per skill per month).
+
+**Why a 3-turn influence window?** Empirically observed in our session logs: corrections almost always come within 1-2 user turns. By turn 3, the user has typically moved on to a new topic. A wider window would increase false positives (attributing unrelated complaints to the skill).
+
+**Why 0.5 weight for partial corrections?** A partial correction means the skill got the direction right but missed details. This is less severe than a full rejection but still indicates room for improvement. The 0.5 weight prevents partial corrections from dominating the metric while still counting them.
 
 ---
 
