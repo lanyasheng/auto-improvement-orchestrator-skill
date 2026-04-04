@@ -30,8 +30,163 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+import logging
+
 from lib.common import read_json, write_json, utc_now_iso  # noqa: E402
 from lib.pareto import ParetoFront, ParetoEntry  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+# Mock mode: set via --mock flag or when claude CLI is unavailable.
+_USE_MOCK_LLM = False
+
+
+# ---------------------------------------------------------------------------
+# LLM-as-judge for accuracy scoring
+# ---------------------------------------------------------------------------
+
+_ACCURACY_JUDGE_PROMPT = """\
+You are evaluating a SKILL.md file — an instruction document that guides an AI coding agent.
+
+Rate this skill on 5 dimensions (0.0–1.0 each). Be strict — most skills are mediocre.
+
+1. **Clarity** (0.0–1.0): Could an AI agent read this and know EXACTLY what to do, step by step? Or is it vague ("consider various approaches")?
+   - 1.0 = unambiguous step-by-step, no interpretation needed
+   - 0.5 = mostly clear but some sections require guessing
+   - 0.0 = vague, hand-wavy, AI would have to improvise
+
+2. **Specificity** (0.0–1.0): Does it use concrete examples with real input→output? Or generic descriptions?
+   - 1.0 = multiple concrete examples with actual I/O
+   - 0.5 = some examples but abstract
+   - 0.0 = no examples, only descriptions
+
+3. **Completeness** (0.0–1.0): Does it cover edge cases, error handling, and "when NOT to do X"?
+   - 1.0 = covers happy path + edge cases + anti-patterns
+   - 0.5 = covers happy path only
+   - 0.0 = incomplete, missing critical sections
+
+4. **Actionability** (0.0–1.0): Could an AI produce correct output on the FIRST try following this skill?
+   - 1.0 = yes, the skill provides enough detail for correct first-try output
+   - 0.5 = probably needs 1-2 corrections
+   - 0.0 = AI would struggle even with multiple attempts
+
+5. **Differentiation** (0.0–1.0): Does this skill add value beyond what the AI already knows?
+   - 1.0 = teaches domain-specific knowledge the AI wouldn't have
+   - 0.5 = reinforces good practices but AI could figure it out
+   - 0.0 = states obvious things any AI would do anyway
+
+Respond with ONLY a JSON object, no markdown:
+{{"clarity": 0.X, "specificity": 0.X, "completeness": 0.X, "actionability": 0.X, "differentiation": 0.X, "overall": 0.X, "weakest": "dimension_name", "reason": "one sentence why"}}
+
+SKILL.md content:
+---
+{skill_content}
+---"""
+
+
+def _llm_judge_accuracy(skill_content: str, mock: bool = False) -> float:
+    """Score a SKILL.md using LLM-as-judge. Returns 0.0–1.0.
+
+    Calls `claude -p` with a rubric prompt. Falls back to regex
+    heuristics if claude CLI is unavailable or mock=True.
+    """
+    if mock or not shutil.which("claude"):
+        return _regex_fallback_accuracy(skill_content)
+
+    prompt = _ACCURACY_JUDGE_PROMPT.format(
+        skill_content=skill_content[:8000]  # cap to avoid huge prompts
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "json"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            logger.warning("claude -p failed (rc=%d), using regex fallback", result.returncode)
+            return _regex_fallback_accuracy(skill_content)
+
+        # Parse claude JSON output
+        try:
+            parsed = json.loads(result.stdout)
+            llm_text = parsed.get("result", result.stdout)
+        except (json.JSONDecodeError, TypeError):
+            llm_text = result.stdout
+
+        # Extract JSON from LLM response
+        return _parse_judge_response(llm_text)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("claude -p timed out, using regex fallback")
+        return _regex_fallback_accuracy(skill_content)
+    except Exception as e:
+        logger.warning("LLM judge error: %s, using regex fallback", e)
+        return _regex_fallback_accuracy(skill_content)
+
+
+def _parse_judge_response(text: str) -> float:
+    """Extract overall score from LLM judge JSON response."""
+    text = text.strip()
+    # Handle markdown code blocks
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+
+    try:
+        data = json.loads(text)
+        # Use "overall" if present, otherwise average dimensions
+        if "overall" in data:
+            score = float(data["overall"])
+        else:
+            dims = [data.get(d, 0.5) for d in
+                    ["clarity", "specificity", "completeness", "actionability", "differentiation"]]
+            score = sum(dims) / len(dims)
+        return max(0.0, min(1.0, score))
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning("Failed to parse judge response: %s", e)
+        return 0.5  # neutral fallback
+
+
+def _regex_fallback_accuracy(content: str) -> float:
+    """Regex-based accuracy heuristic. Used when LLM is unavailable.
+
+    This is the old approach — kept as fallback only.
+    R²=0.00 correlation with evaluator pass rate (2026-04-04 experiment).
+    """
+    content_lower = content.lower()
+    checks = []
+
+    # Workflow structure
+    phase_markers = ["## phase", "## step", "## 阶段", "### step",
+                     "pipeline", "workflow", "步骤", "流程"]
+    checks.append(any(m in content_lower for m in phase_markers))
+
+    # Conditional logic
+    checks.append(bool(re.search(r'(if\s+.*(?:then|→|->)|当.*时)', content_lower)))
+
+    # Output specification
+    checks.append(bool(re.search(r'(## output|## 输出|returns?\s*:)', content_lower)))
+
+    # Severity with reason
+    checks.append(bool(re.search(
+        r'(must|never|禁止).{0,100}(because|otherwise|否则)', content_lower)))
+
+    # Anti-patterns
+    checks.append(bool(re.search(
+        r'(不要|do not|avoid).{0,100}(instead|而是|应该)', content_lower)))
+
+    # Escalation criteria
+    escalation = ["ask the user", "询问", "stop if", "如果不确定", "确认"]
+    checks.append(any(m in content_lower for m in escalation))
+
+    # Concrete examples
+    checks.append(bool(re.findall(r'<example>|```\w*\n.{50,}?```', content, re.DOTALL)))
+
+    return sum(checks) / len(checks) if checks else 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -268,20 +423,18 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         if lines > 500 and not has_references:
             scores["coverage"] = max(0.3, scores["coverage"] - 0.2)
 
-    # Accuracy: SKILL.md quality scoring.
+    # Accuracy: Two-tier scoring.
     #
-    # Architecture: Two-tier scoring based on empirical correlation analysis
-    # (R²=0.064 experiment, 2026-04-04).
+    # Tier 1 (regex): fast structural gate — has frontmatter, name, description, not a stub.
+    #   If any fail → accuracy capped at 0.3. Cost: $0, milliseconds.
     #
-    # Tier 1 "table stakes": binary gate checks that all reasonable skills
-    # pass. These set a floor (0.4 if all pass) but don't differentiate.
+    # Tier 2 (LLM): semantic quality — LLM reads SKILL.md and judges whether
+    #   an AI agent could follow it to produce correct output. Cost: ~$0.5, seconds.
+    #   Falls back to regex heuristics if LLM unavailable (no API key, --mock mode).
     #
-    # Tier 2 "execution-predictive": checks that actually correlate with
-    # evaluator pass rate. These drive the remaining 0.6 of the score.
-    #
-    # Design: structural presence checks (has frontmatter, has section X)
-    # showed zero correlation with actual skill effectiveness. Checks that
-    # measure *how well the skill guides AI behavior* are predictive.
+    # Why LLM? The R²=0.064 experiment (2026-04-04) proved regex exec_checks have
+    # zero correlation with evaluator pass rate. LLM-as-judge is the minimum viable
+    # alternative that can actually assess instruction quality.
     if has_skill_md:
         content = skill_md_content
         content_lower = content.lower()
@@ -291,11 +444,9 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         if content.startswith("---") and content.count("---") >= 2:
             fm_section = content.split("---", 2)[1]
         desc_text = _extract_description_text(fm_section) if fm_section else ""
-        desc_lower = desc_text.lower()
         lines = len(content.split("\n"))
 
-        # ===== TIER 1: Table stakes (binary gate → 0.4 floor) =====
-        # If any of these fail, accuracy is capped at 0.3.
+        # ===== TIER 1: Table stakes (regex, binary gate → 0.3 cap) =====
         gate_checks = [
             content.startswith("---"),                    # has frontmatter
             "name:" in fm_section if fm_section else False,
@@ -305,106 +456,13 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         ]
         gate_pass = all(gate_checks)
 
-        # ===== TIER 2: Execution-predictive checks (scored) =====
-        # These measure whether the skill provides actionable guidance
-        # that helps an AI actually complete tasks correctly.
-        exec_checks = []
-
-        # --- E1. Workflow/decision structure (r=+0.80 in correlation study) ---
-        # Skills with clear step sequences or decision trees perform better
-        phase_markers = ["## phase", "## step", "## 阶段", "### step",
-                         "pipeline", "workflow", "步骤", "流程", "阶段"]
-        exec_checks.append(any(m in content_lower for m in phase_markers))
-
-        # --- E2. Conditional logic (if X then Y) ---
-        # Skills that provide branching guidance help AI handle edge cases
-        conditional_patterns = [
-            r'if\s+.*(?:then|→|->)',        # if ... then
-            r'当.*时.*(?:应该|必须|需要)',     # 当...时...应该
-            r'├──|└──',                      # decision tree formatting
-            r'\bwhen\b.*(?:must|should|use)', # when ... must
-        ]
-        has_conditionals = any(
-            bool(re.search(p, content_lower)) for p in conditional_patterns
-        )
-        exec_checks.append(has_conditionals)
-
-        # --- E3. Concrete output specification ---
-        # Skills that define what "done" looks like (format, structure, deliverables)
-        output_spec_markers = [
-            r'```\s*\n.*?(output|result|format|模板|格式)',  # code block with output
-            r'## output',
-            r'## 输出',
-            r'returns?\s*:',                               # "Returns: ..."
-            r'deliverable',
-        ]
-        has_output_spec = any(
-            bool(re.search(p, content_lower)) for p in output_spec_markers
-        )
-        exec_checks.append(has_output_spec)
-
-        # --- E4. Severity tiers with context ---
-        # Not just "has MUST" (all skills have it) but MUST/NEVER with
-        # specific consequence or reason attached
-        severity_with_reason = bool(re.search(
-            r'(must|never|禁止|必须).{0,100}(because|otherwise|否则|原因|导致|会|将)',
-            content_lower
-        ))
-        exec_checks.append(severity_with_reason)
-
-        # --- E5. Actionable anti-patterns ---
-        # Skills that say what NOT to do with specific alternatives
-        has_antipattern = bool(re.search(
-            r'(不要|do not|don\'t|avoid|禁止).{0,100}(instead|而是|应该|use|用)',
-            content_lower
-        ))
-        exec_checks.append(has_antipattern)
-
-        # --- E6. Escalation criteria ---
-        # When should AI stop and ask vs proceed? Reduces failure modes.
-        escalation_markers = ["ask the user", "询问", "stop if", "如果不确定",
-                              "confirm with", "确认", "不确定时"]
-        exec_checks.append(any(m in content_lower for m in escalation_markers))
-
-        # --- E7. Symptom-driven description (routing quality) ---
-        # Description uses trigger scenarios, not just capability list
-        symptom_kw = ["当", "需要", "想要", "use when", "want to", "如果"]
-        exec_checks.append(any(kw in desc_lower for kw in symptom_kw))
-
-        # --- E8. Concrete examples with I/O ---
-        # Examples that show specific input → output, not just "use correctly"
-        example_blocks = re.findall(r'<example>(.*?)</example>', content, re.DOTALL)
-        code_blocks = re.findall(r'```[^\n]*\n(.*?)```', content, re.DOTALL)
-        all_examples = example_blocks + code_blocks
-        has_concrete_example = any(
-            len(block.strip()) > 50 and  # substantive, not a stub
-            any(kw in block.lower() for kw in ["→", "->", "output", "result",
-                                                "returns", "produces", "输出"])
-            for block in all_examples
-        )
-        exec_checks.append(has_concrete_example)
-
-        # --- E9. Disambiguation in description ---
-        # Description says what skill is NOT for (routing clarity)
-        has_disambiguation = any(
-            w in desc_lower for w in ["不适用", "不用于", "not for",
-                                      "don't use for", "instead use", "参见"]
-        ) if desc_text else False
-        exec_checks.append(has_disambiguation)
-
-        # --- E10. No path coupling (atomicity) ---
-        # Skill doesn't reference other skills' internal structure
-        path_coupling = re.search(r'@[\w-]+/(references|scripts|assets)/', content)
-        exec_checks.append(path_coupling is None)
-
-        # --- Score computation ---
+        # ===== TIER 2: LLM-as-judge (semantic quality) =====
         if not gate_pass:
-            # Failed table stakes → capped at 0.3
             scores["accuracy"] = 0.3
         else:
-            # Gate passed (0.4 floor) + execution checks (up to 0.6)
-            exec_score = sum(exec_checks) / len(exec_checks) if exec_checks else 0
-            scores["accuracy"] = 0.4 + 0.6 * exec_score
+            llm_score = _llm_judge_accuracy(content, mock=_USE_MOCK_LLM)
+            # Gate passed (0.4 floor) + LLM score drives remaining 0.6
+            scores["accuracy"] = 0.4 + 0.6 * llm_score
 
         lines = len(content.split("\n"))
         if lines > 0:
@@ -1111,11 +1169,15 @@ def parse_args():
     parser.add_argument("--max-iterations", type=int, default=5, help="Max iterations")
     parser.add_argument("--state-root", type=str, default=None, help="State root directory")
     parser.add_argument("--memory-dir", type=str, default=None, help="Memory directory")
+    parser.add_argument("--mock", action="store_true", help="Use regex fallback instead of LLM for accuracy scoring")
     return parser.parse_args()
 
 
 def main():
+    global _USE_MOCK_LLM
     args = parse_args()
+    _USE_MOCK_LLM = args.mock
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     report = self_improve_loop(
         skill_path=Path(args.skill_path),
         metric=args.metric,
