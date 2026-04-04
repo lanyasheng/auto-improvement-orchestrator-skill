@@ -60,6 +60,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run full pipeline without pausing",
     )
+    parser.add_argument(
+        "--task-suite",
+        help="Path to task_suite.yaml for evaluator (enables real LLM evaluation)",
+    )
+    parser.add_argument(
+        "--eval-mock",
+        action="store_true",
+        help="Run evaluator in mock mode (no claude -p calls)",
+    )
     return parser.parse_args(argv)
 
 
@@ -170,6 +179,7 @@ def run_evaluator(
     state_root: str,
     task_suite: str | None = None,
     eval_threshold: float = 6.0,
+    mock: bool = False,
 ) -> dict[str, Any] | None:
     """Call evaluate.py if a task suite exists for the target skill.
 
@@ -179,17 +189,20 @@ def run_evaluator(
     if not EVALUATOR_SCRIPT.exists():
         print("  Evaluator: skipped (script not found)")
         return None
+    if not task_suite:
+        print("  Evaluator: skipped (no --task-suite provided)")
+        return None
     cmd = [
         sys.executable,
         str(EVALUATOR_SCRIPT),
         "--input", str(ranking_artifact_path),
         "--candidate-id", candidate_id,
+        "--task-suite", str(task_suite),
         "--state-root", str(state_root),
         "--eval-threshold", str(eval_threshold),
-        "--mock",  # Default to mock mode; remove for real evaluation
     ]
-    if task_suite:
-        cmd.extend(["--task-suite", str(task_suite)])
+    if mock:
+        cmd.append("--mock")
     try:
         artifact_path = _run_script(cmd, "evaluator")
         result = read_json(Path(artifact_path))
@@ -284,6 +297,8 @@ def run_pipeline(
     sources: list[str],
     state_root: str,
     max_retries: int = 3,
+    task_suite: str | None = None,
+    eval_mock: bool = False,
 ) -> dict[str, Any]:
     """Run the full PROPOSE → DISCRIMINATE → EVALUATE → EXECUTE → GATE loop.
 
@@ -315,11 +330,13 @@ def run_pipeline(
 
         candidate_id = best["id"]
 
-        # 3.5 EVALUATE (optional — skipped if no task suite or evaluator not installed)
+        # 3.5 EVALUATE (optional — skipped if no --task-suite provided)
         eval_result = run_evaluator(
             ranking_artifact_path,
             candidate_id,
             state_root,
+            task_suite=task_suite,
+            mock=eval_mock,
         )
         if eval_result and eval_result.get("verdict") == "fail":
             # Evaluation failed — treat as revert and retry
@@ -414,12 +431,16 @@ def main(argv: list[str] | None = None) -> int:
     state_root = str(Path(args.state_root).expanduser().resolve())
     sources = [str(Path(s).expanduser().resolve()) for s in args.source if s]
 
+    task_suite = str(Path(args.task_suite).expanduser().resolve()) if args.task_suite else None
+
     try:
         summary = run_pipeline(
             target=target,
             sources=sources,
             state_root=state_root,
             max_retries=args.max_retries,
+            task_suite=task_suite,
+            eval_mock=args.eval_mock,
         )
     except RuntimeError as exc:
         print(f"Pipeline error: {exc}", file=sys.stderr)
