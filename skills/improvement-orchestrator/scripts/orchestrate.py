@@ -106,7 +106,7 @@ def _run_script(cmd: list[str], label: str) -> str:
 
     Raises RuntimeError on non-zero exit.
     """
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} failed (exit {result.returncode}):\n"
@@ -292,6 +292,70 @@ def extract_failure_trace(
 # ---------------------------------------------------------------------------
 
 
+def run_baseline_evaluation(
+    target: str,
+    task_suite: str,
+    state_root: str,
+    mock: bool = False,
+) -> str | None:
+    """Run evaluator in standalone mode on current SKILL.md to get baseline failures.
+
+    Returns path to a feedback source file containing per-task failure details,
+    or None if no failures found or evaluator unavailable.
+    """
+    if not EVALUATOR_SCRIPT.exists():
+        return None
+
+    cmd = [
+        sys.executable,
+        str(EVALUATOR_SCRIPT),
+        "--standalone",
+        "--task-suite", str(task_suite),
+        "--state-root", str(state_root),
+        "--skill-path", str(target),
+    ]
+    if mock:
+        cmd.append("--mock")
+
+    try:
+        stdout = _run_script(cmd, "baseline-evaluator")
+        result = read_json(Path(stdout))
+    except RuntimeError as exc:
+        print(f"  Baseline evaluation failed ({exc}), continuing without feedback")
+        return None
+
+    # Extract failed tasks as feedback for generator
+    task_results = result.get("task_results", [])
+    failed_tasks = [r for r in task_results if not r.get("passed")]
+    if not failed_tasks:
+        print(f"  Baseline: all tasks passed, no failures to feed back")
+        return None
+
+    pass_rate = result.get("evaluation", {}).get("pass_rate", 0)
+    print(f"  Baseline: {len(failed_tasks)} task(s) failed (pass_rate={pass_rate})")
+
+    # Write failure details as a source file for generator
+    feedback = {
+        "type": "evaluator_baseline_failures",
+        "pass_rate": pass_rate,
+        "failed_tasks": [],
+        "timestamp": utc_now_iso(),
+    }
+    for t in failed_tasks:
+        feedback["failed_tasks"].append({
+            "task_id": t.get("task_id"),
+            "score": t.get("score", 0),
+            "details": t.get("details", ""),
+            "error": t.get("error", ""),
+        })
+
+    feedback_dir = Path(state_root) / "traces"
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    feedback_path = feedback_dir / "baseline-failures.json"
+    write_json(feedback_path, feedback)
+    return str(feedback_path)
+
+
 def run_pipeline(
     target: str,
     sources: list[str],
@@ -310,6 +374,15 @@ def run_pipeline(
     final_candidate_id: str | None = None
     final_artifact_path: str | None = None
     attempts_used = 0
+
+    # 0. BASELINE EVALUATION — run evaluator on current SKILL.md first
+    #    to discover which tasks fail, then inject as feedback for generator
+    if task_suite:
+        baseline_feedback = run_baseline_evaluation(
+            target, task_suite, state_root, mock=eval_mock,
+        )
+        if baseline_feedback:
+            active_sources.append(baseline_feedback)
 
     for attempt in range(1, max_retries + 1):
         attempts_used = attempt

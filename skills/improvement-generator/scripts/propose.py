@@ -240,7 +240,128 @@ def adjust_candidates_from_trace(candidates: list, trace: dict) -> list:
     return adjusted
 
 
+def _find_evaluator_failures(feedback_entries: list[dict]) -> list[dict]:
+    """Extract evaluator baseline failure data from source entries.
+
+    Source entries from expand_source() have {path, kind, snippet} format,
+    not the raw JSON content. We need to read the actual file if it looks
+    like a baseline-failures JSON.
+    """
+    for entry in feedback_entries:
+        if not isinstance(entry, dict):
+            continue
+        # Direct match (if raw JSON was passed)
+        if entry.get("type") == "evaluator_baseline_failures":
+            return entry.get("failed_tasks", [])
+        # Match via source entry path
+        entry_path = entry.get("path", "")
+        if "baseline-failures" in entry_path or "eval-trace" in entry_path:
+            try:
+                data = read_json(Path(entry_path))
+                if data.get("type") == "evaluator_baseline_failures":
+                    return data.get("failed_tasks", [])
+            except Exception:
+                continue
+    return []
+
+
+def _llm_propose_skill_fix(target: Path, failed_tasks: list[dict]) -> dict | None:
+    """Use LLM to propose a SKILL.md fix based on evaluator failures.
+
+    Reads the current SKILL.md, sends it + failure details to claude -p,
+    and asks for a targeted fix.
+    """
+    import shutil
+    import subprocess
+    import json as _json
+
+    skill_md = target / "SKILL.md" if target.is_dir() else target
+    if not skill_md.exists():
+        return None
+    if shutil.which("claude") is None:
+        return None
+
+    skill_content = skill_md.read_text(encoding="utf-8")
+    failures_text = "\n".join(
+        f"- Task '{t['task_id']}': {t.get('details', t.get('error', 'unknown'))}"
+        for t in failed_tasks
+    )
+
+    prompt = (
+        "You are improving a SKILL.md file based on evaluator task failures.\n\n"
+        f"## Current SKILL.md\n```\n{skill_content[:3000]}\n```\n\n"
+        f"## Failed Tasks\n{failures_text}\n\n"
+        "Analyze why these tasks failed and propose a TARGETED change to SKILL.md "
+        "that would fix the failures without breaking what already works.\n\n"
+        "Respond with ONLY a JSON object:\n"
+        '{{"section_heading": "## <heading to add/replace>", '
+        '"action": "append_markdown_section" or "replace_markdown_section", '
+        '"content_lines": ["line1", "line2", ...], '
+        '"rationale": "why this fixes the failures"}}'
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "json"],
+            input=prompt, capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            return None
+        # Parse claude output
+        try:
+            claude_out = _json.loads(result.stdout)
+            text = claude_out.get("result", result.stdout)
+        except (_json.JSONDecodeError, TypeError):
+            text = result.stdout
+        # Extract JSON from response (may be wrapped in markdown)
+        text = text.strip()
+        # Find the first { and last } to extract JSON robustly
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace >= 0 and last_brace > first_brace:
+            text = text[first_brace:last_brace + 1]
+        parsed = _json.loads(text)
+        return {
+            "id": "cand-01-eval-fix",
+            "title": f"Fix SKILL.md based on {len(failed_tasks)} evaluator failure(s)",
+            "target_path": str(skill_md.resolve()),
+            "category": "prompt",
+            "rationale": parsed.get("rationale", "LLM-proposed fix for evaluator failures"),
+            "risk_level": "low",
+            "proposed_change_summary": f"Targeted SKILL.md fix for failed tasks: {', '.join(t['task_id'] for t in failed_tasks)}",
+            "stage": "proposed",
+            "source_refs": [f"evaluator:{t['task_id']}" for t in failed_tasks],
+            "executor_support": True,
+            "execution_plan": {
+                "action": parsed.get("action", "append_markdown_section"),
+                "section_heading": parsed.get("section_heading", "## Output Format"),
+                "content_lines": parsed.get("content_lines", []),
+            },
+        }
+    except Exception:
+        return None
+
+
 def generate_candidates(target: Path, feedback_entries: list[dict], max_candidates: int) -> list[dict]:
+    # Check for evaluator failure data first — this is the highest-signal input
+    eval_failures = _find_evaluator_failures(feedback_entries)
+    if eval_failures:
+        llm_fix = _llm_propose_skill_fix(target, eval_failures)
+        if llm_fix:
+            # Put the evaluator-driven fix first, then add template candidates
+            candidates = [llm_fix]
+            # Still generate template candidates as fallbacks
+            feedback_buckets = classify_feedback(feedback_entries)
+            idx = 2
+            for builder in [build_docs_candidate, build_reference_candidate]:
+                c = builder(target, feedback_buckets, idx)
+                if c:
+                    candidates.append(c)
+                    idx += 1
+                if len(candidates) >= max_candidates:
+                    break
+            return candidates[:max_candidates]
+
     feedback_buckets = classify_feedback(feedback_entries)
     builders = [
         build_docs_candidate,
