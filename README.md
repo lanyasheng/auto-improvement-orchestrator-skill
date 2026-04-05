@@ -68,7 +68,7 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 python3 skills/improvement-orchestrator/scripts/orchestrate.py \
   --target /path/to/skill \
   --state-root /tmp/state \
-  --max-retries 3 --auto
+  --max-retries 3
 ```
 
 ### Run task suite (execution effectiveness)
@@ -78,6 +78,14 @@ python3 skills/improvement-evaluator/scripts/evaluate.py \
   --task-suite /path/to/task_suite.yaml \
   --state-root /tmp/eval \
   --standalone --mock  # remove --mock for real claude -p
+```
+
+### Extract user feedback from session logs
+
+```bash
+python3 skills/session-feedback-analyzer/scripts/analyze.py \
+  --session-dir ~/.claude/projects/ \
+  --output feedback-store/feedback.jsonl
 ```
 
 ---
@@ -216,8 +224,9 @@ See `skills/improvement-evaluator/references/task-format.md` for the full specif
 | SchemaGate | Valid JSON structure |
 | CompileGate | Target file syntactically valid |
 | LintGate | No new lint warnings |
-| RegressionGate | No Pareto dimension regressed > 5% |
+| RegressionGate | No Pareto dimension regressed (per-dimension tolerance: security 2%, efficiency 10%, others 5%) |
 | ReviewGate | Consensus is not DISPUTED+reject |
+| DoubtGate | Candidate description has < threshold hedging words (threshold varies by category) |
 | HumanReviewGate | High-risk candidates need manual approval |
 
 Decisions: `keep` / `pending_promote` / `reject` / `revert`
@@ -230,7 +239,7 @@ Applies accepted candidates with automatic backup. 4 action types: `append_markd
 
 Karpathy self-improvement loop:
 
-1. Evaluate across 8 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality, leakage, knowledge_density)
+1. Evaluate across 6 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality) with category-aware weights
 2. Find weakest dimension → propose targeted improvement
 3. Backup + apply → re-evaluate
 4. Keep if Pareto-accepted (no dimension regressed), revert otherwise
@@ -315,11 +324,11 @@ skills/
   skill-distill/             # Merge overlapping skills into one
   prompt-hardening/          # Demo target: harden agent prompts
   deslop/                    # Demo target: strip AI-generated text patterns
-  execution-harness/         # 12 patterns for dispatched agent reliability
+  execution-harness/         # 21 patterns for dispatched agent reliability
 lib/
   common.py                  # Shared utilities
   pareto.py                  # ParetoFront + ParetoEntry
-  feedback_store.py          # Shared feedback persistence
+  state_machine.py           # State management + receipt handling
 ```
 
 ---
@@ -336,13 +345,16 @@ lib/
 
 ## Comparison
 
-| Approach | Structure eval | Execution eval | Feedback loop | Multi-dimension |
-|----------|:-:|:-:|:-:|:-:|
-| **This project** | Yes (6 dims) | Yes (task suites) | Auto-retry + traces | Pareto front |
-| Karpathy autoresearch | No | Yes (val_bpb) | Keep/discard | Single scalar |
-| DSPy | No | Depends | Bayesian opt | Single objective |
-| PromptFoo | No | Partial (rubrics) | Manual | No |
-| Aider Benchmark | No | Yes (Exercism) | Manual | Single pass rate |
+| System | Optimizes | Granularity | Human-readable diff? | Multi-dim? | Feedback source |
+|--------|-----------|-------------|:--------------------:|:----------:|-----------------|
+| **This project** | SKILL.md docs | Section | Yes | 6-dim Pareto | Task suite + user implicit |
+| DSPy | Prompt tokens | Token | No (Bayesian search) | Single | User-defined metric |
+| TextGrad | LLM output vars | Token | No | Single | LLM "gradients" |
+| GEPA | Code generation | Function | Yes | Single | Trace reflection |
+| PromptFoo | Prompt assertions | Prompt | Yes | Single (pass rate) | Assertion suite |
+| DeepEval | LLM output | Output | N/A | Multi metric | Rubric |
+| LangSmith | Agent traces | Trace | N/A | Multi metric | Observability |
+| Karpathy autoresearch | train.py | File | Yes | Single (val_bpb) | Training loss |
 
 ---
 
