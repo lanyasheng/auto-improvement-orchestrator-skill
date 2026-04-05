@@ -1,5 +1,6 @@
 ---
 name: benchmark-store
+category: tool
 description: "当需要初始化基准数据库、对比 skill 评分与历史基线、查看 Pareto front 是否有维度回退、或查阅质量分级标准时使用。不用于给候选打分（用 improvement-discriminator）或自动改进（用 improvement-learner）。"
 license: MIT
 triggers:

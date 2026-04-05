@@ -1,5 +1,6 @@
 ---
 name: prompt-hardening
+category: rule
 version: 0.5.0
 description: 硬化 agent prompt、system prompt、SOUL.md、AGENTS.md、cron prompt 使 LLM 可靠遵循指令。触发词：agent 不听话、忽略规则、绕过约束、prompt 优化、指令合规、规则强化、prompt 硬化、LLM 不遵守、模型违规、creative circumvention。Use when agent ignores rules, disobeys instructions, bypasses tool constraints, needs prompt optimization, instruction compliance improvement, or rule hardening. 不适用于代码生成、代码审查、测试编写等执行型任务。参见 improvement-orchestrator (用于 skill 质量改进)、code-review-enhanced (用于代码审查)。
 license: MIT

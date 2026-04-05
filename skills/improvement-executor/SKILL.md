@@ -1,5 +1,6 @@
 ---
 name: improvement-executor
+category: tool
 description: "当需要把已批准的改进候选应用到目标文件、回滚之前的变更、或预览变更效果时使用。支持 4 种 action（append/replace/insert_before/update_yaml），每次变更前自动备份。不用于打分（用 improvement-discriminator）或门禁验证（用 improvement-gate）。"
 license: MIT
 triggers:

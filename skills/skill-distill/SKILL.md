@@ -1,5 +1,6 @@
 ---
 name: skill-distill
+category: tool
 description: |
   当需要把多个功能重叠的 skill 合并为一个蒸馏版 skill 时使用。
   不适用于从 skills 提取 rules（rules extraction is a separate capability from ECC's rules-distill skill, not part of this repo）或从 session 历史提取 skills（用 distill CLI）。

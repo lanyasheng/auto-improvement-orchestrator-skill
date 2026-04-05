@@ -1,5 +1,6 @@
 ---
 name: autoloop-controller
+category: orchestration
 description: "When continuous automated improvement of a Skill is needed. Wraps improvement-orchestrator in a persistent loop with convergence detection (plateau/oscillation), cost control, and cross-session state persistence. Not for single-shot improvement (use improvement-orchestrator) or quality scoring (use improvement-learner)."
 license: MIT
 triggers:

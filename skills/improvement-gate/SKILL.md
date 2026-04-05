@@ -1,5 +1,6 @@
 ---
 name: improvement-gate
+category: review
 description: "当执行完变更需要验证是否应保留、候选被标记 pending 需要人工审批、或想查看待审队列时使用。6 层机械门禁: Schema→Compile→Lint→Regression→Review→HumanReview，任一层失败即拒绝。不用于打分（用 improvement-discriminator）或执行变更（用 improvement-executor）。"
 license: MIT
 triggers:

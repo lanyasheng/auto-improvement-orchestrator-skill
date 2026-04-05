@@ -1,5 +1,6 @@
 ---
 name: execution-harness
+category: knowledge
 version: 1.0.0
 description: Claude Code agent 执行可靠性增强。当 agent 提前停止、context 压缩丢失决策、工具重试死循环、或限速后挂死时使用。提供 Stop hook 持续执行、handoff 文档上下文存活、工具错误升级、限速恢复等 12 个可组合模式。不用于任务调度或编排（这是执行层，不是调度层）。参见 Claude Code hooks 文档了解 hook 机制。
 license: MIT

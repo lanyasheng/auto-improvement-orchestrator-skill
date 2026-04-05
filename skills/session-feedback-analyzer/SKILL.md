@@ -1,5 +1,6 @@
 ---
 name: session-feedback-analyzer
+category: tool
 description: |
   Parse Claude Code session JSONL to extract implicit user feedback signals.
   Detects skill invocations, classifies user responses as correction/acceptance/partial,

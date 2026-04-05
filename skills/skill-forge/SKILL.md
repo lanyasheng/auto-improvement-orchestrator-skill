@@ -1,5 +1,6 @@
 ---
 name: skill-forge
+category: tool
 description: "从需求描述或已有 SKILL.md 生成完整的可评估 Skill。核心能力: 自动生成 task_suite.yaml 测试任务集。当需要为新 Skill 创建测试、为已有 Skill 补充测试、或从零创建可验证的 Skill 时使用。"
 license: MIT
 triggers:
