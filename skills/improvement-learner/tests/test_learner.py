@@ -133,7 +133,8 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "text-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
-            "---\nname: text-only\nversion: 1.0\ndescription: A pure text skill\n"
+            "---\nname: text-only\nversion: 1.0\n"
+            "description: A pure text skill for providing coding guidance and best practices\n"
             "author: Team\nlicense: MIT\n---\n\n# Text Skill\n\n"
             "## When to Use\n- For guidance\n\n## When NOT to Use\n- Never\n\n"
             "## Usage\n\n```\nJust read SKILL.md\n```\n",
@@ -142,7 +143,7 @@ class TestEvaluateSkillDimensions:
         scores = evaluate_skill_dimensions(skill)
         assert scores["coverage"] == 0.6  # SKILL.md only = base 60%
         assert scores["reliability"] == 1.0  # pure-text → default 1.0
-        assert scores["accuracy"] >= 0.4  # 20 checks now, pure-text passes ~10
+        assert scores["accuracy"] >= 0.4  # gate passes, LLM judge gives rest
 
     def test_full_structure_scores_high(self, tmp_path):
         skill = tmp_path / "good-skill"
@@ -175,9 +176,16 @@ class TestEvaluateSkillDimensions:
             "def test_pass(): assert True\n", encoding="utf-8"
         )
 
-        scores = evaluate_skill_dimensions(skill)
+        # Use mock mode for deterministic accuracy scoring
+        import self_improve
+        old_mock = self_improve._USE_MOCK_LLM
+        self_improve._USE_MOCK_LLM = True
+        try:
+            scores = evaluate_skill_dimensions(skill)
+        finally:
+            self_improve._USE_MOCK_LLM = old_mock
         assert scores["coverage"] == 1.0  # SKILL.md + all 4 bonuses = 1.0
-        assert scores["accuracy"] == 1.0  # all accuracy checks pass
+        assert scores["accuracy"] >= 0.8  # mock mode: gate passes + regex heuristics
         assert scores["security"] >= 0.8  # no secrets
 
     def test_skill_md_without_frontmatter(self, tmp_path):

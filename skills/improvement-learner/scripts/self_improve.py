@@ -577,16 +577,18 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     else:
         scores["reliability"] = test_score
 
-    # Security: check SKILL.md only (not implementation code which legitimately
-    # uses "password" parameters, "secrets" module, etc.)
+    # Security: check for actual secrets and dangerous patterns.
+    # Excludes documentation references (e.g. "sk-" mentioned in a security checklist).
     sec_checks = []
     if has_skill_md:
         skill_content = skill_md_content
         skill_lower = skill_content.lower()
-        # SKILL.md should not contain actual secrets
+        # Check for actual secret assignments (not documentation references)
         sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
         sec_checks.append("password =" not in skill_lower and "password=" not in skill_lower)
-        sec_checks.append("sk-" not in skill_content)  # API key pattern
+        # sk- check: only flag if it looks like a real key (sk- followed by 20+ alnum)
+        import re
+        sec_checks.append(not bool(re.search(r"sk-[A-Za-z0-9]{20,}", skill_content)))
         # Has license in frontmatter?
         if skill_content.count("---") >= 2:
             fm = skill_content.split("---", 2)[1]
@@ -596,16 +598,26 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     else:
         sec_checks = [False, False, False, False]
 
-    # Implementation code checks (only flag dangerous patterns, not parameter names)
+    # Implementation code checks (only scripts, not test files)
     all_py_content = ""
     for f in skill_path.rglob("*.py"):
-        if "__pycache__" in str(f):
+        if "__pycache__" in str(f) or "test_" in f.name:
             continue
         try:
             all_py_content += f.read_text(encoding="utf-8", errors="ignore") + "\n"
         except Exception:
             pass
-    sec_checks.append("os.system(" not in all_py_content)
+    # os.system() — dangerous, but exclude documentation strings
+    has_os_system = "os.system(" in all_py_content
+    if has_os_system:
+        # Check it's not inside a string/comment (rough heuristic: check if in a quoted line)
+        real_usage = any(
+            "os.system(" in line and not line.strip().startswith(("#", '"', "'", "|"))
+            for line in all_py_content.split("\n")
+        )
+        sec_checks.append(not real_usage)
+    else:
+        sec_checks.append(True)
     sec_checks.append("exec(" not in all_py_content or "exec_module" in all_py_content)
 
     scores["security"] = sum(sec_checks) / len(sec_checks) if sec_checks else 0.5

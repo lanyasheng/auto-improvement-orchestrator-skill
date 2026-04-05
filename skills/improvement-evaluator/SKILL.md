@@ -21,49 +21,97 @@ Measures whether a Skill actually makes AI perform better on real tasks.
 - Verify that a SKILL.md change improves AI task execution (not just document structure)
 - Run a task suite against a candidate SKILL.md and compare with baseline
 - Get execution_pass_rate as a concrete quality metric
+- Run standalone evaluation on current SKILL.md to discover baseline failures
 
 ## When NOT to Use
 - **只想检查 SKILL.md 结构质量** → use `improvement-learner`
 - **只想给候选打分** → use `improvement-discriminator`
 - **跑全流程** → use `improvement-orchestrator`
 
-## Task Suite Format (YAML)
-(reference: references/task-format.md)
+## 2 Modes
+
+| Mode | When | Required Params |
+|------|------|-----------------|
+| **Pipeline** | Called by orchestrator after discriminator | `--input`, `--candidate-id`, `--task-suite`, `--state-root` |
+| **Standalone** | Direct evaluation of current SKILL.md | `--standalone`, `--task-suite`, `--state-root`, `--skill-path` |
+
+## CLI
+
+```bash
+# Pipeline mode: evaluate candidate vs baseline
+python3 scripts/evaluate.py --input ranking.json --candidate-id cand-01-docs \
+  --task-suite tasks.yaml --state-root ./state \
+  [--pass-k 1] [--eval-threshold 6.0] [--baseline-cache-dir /cache] [--mock] [--output eval.json]
+
+# Standalone mode: evaluate current SKILL.md directly
+python3 scripts/evaluate.py --standalone --task-suite tasks.yaml \
+  --state-root ./state --skill-path /path/to/skill [--mock]
+```
+
+| Param | Default | When to change |
+|-------|---------|---------------|
+| `--eval-threshold` | 6.0 | Orchestrator sets per-category thresholds (e.g., docs=5.0, prompt=7.0) |
+| `--pass-k` | 1 | Raise to 3 for flaky tasks |
+| `--mock` | false | Use in CI or when `claude` CLI is not installed |
+| `--baseline-cache-dir` | None | Set to avoid re-running baseline on unchanged SKILL.md |
 
 ## 3 Judge Types
-| Judge | Mechanism | Use When |
-|-------|-----------|----------|
-| ContainsJudge | Check output contains expected keywords | Deterministic checks |
-| PytestJudge | Run pytest on AI output | Structured output validation |
-| LLMRubricJudge | LLM scores against rubric | Semantic quality (mock mode available) |
+
+| Judge | `type` in YAML | Mechanism | Use When |
+|-------|----------------|-----------|----------|
+| **ContainsJudge** | `contains` | Check output contains all strings in `expected` list | Deterministic keyword/format checks |
+| **PytestJudge** | `pytest` | Run pytest on `fixtures/{test_file}` against AI output | Structured output validation (JSON, code) |
+| **LLMRubricJudge** | `llm-rubric` | LLM scores output against `rubric` text (mock mode: random pass) | Semantic quality evaluation |
+
+## Task Suite YAML Format
+
+```yaml
+skill_id: my-skill
+version: "1.0"
+tasks:
+  - id: task-001
+    prompt: "Given X, produce Y"
+    judge: {type: contains, expected: ["keyword1", "keyword2"]}
+  - id: task-002
+    prompt: "Generate a config file"
+    judge: {type: pytest, test_file: fixtures/test_config.py}
+  - id: task-003
+    prompt: "Explain concept Z"
+    judge: {type: llm-rubric, rubric: "Must cover A, B, C with examples"}
+```
+
+## Conditional Evaluation
+
+- **Score threshold**: candidates with discriminator score < `--eval-threshold` are skipped (verdict=`skipped`)
+- **Baseline abort**: if baseline pass_rate < 0.2 (20%), evaluation aborts with verdict=`error` — indicates broken task suite
+- **Baseline caching**: SHA256(skill_content + suite_path) → 7-day TTL cache to avoid re-running unchanged baselines
 
 <example>
-Evaluate a skill with a task suite:
-$ python3 scripts/evaluate.py --input ranking.json --candidate-id c1 --task-suite tasks.yaml --state-root /tmp/state
-→ {"execution_pass_rate": 0.80, "baseline_pass_rate": 0.70, "delta": 0.10, "verdict": "pass"}
+Pipeline mode: candidate vs baseline comparison
+$ python3 scripts/evaluate.py --input ranking.json --candidate-id c1 --task-suite tasks.yaml --state-root ./state
+→ Candidate pass rate: 0.80 (4/5 tasks passed)
+→ Baseline pass rate: 0.60 (3/5 tasks passed)
+→ {"execution_pass_rate": 0.80, "baseline_pass_rate": 0.60, "delta": 0.20, "verdict": "pass"}
 </example>
 
 <anti-example>
-Using evaluator without a task suite:
-→ Will output verdict="skipped" — evaluator requires a task_suite.yaml
+Using evaluator without task suite:
+→ Evaluator requires --task-suite. Without it, orchestrator skips evaluator entirely.
+→ No --standalone without --task-suite either — both modes require it.
 </anti-example>
 
-## CLI
-python3 scripts/evaluate.py --input <ranking.json> --candidate-id <id> --task-suite <tasks.yaml> --state-root <dir> [--pass-k 1] [--baseline-cache-dir <dir>] [--output <path>]
+## Output Artifact
 
-## Output Artifacts
-| Request | Deliverable |
-|---------|------------|
-| Evaluate candidate | JSON with execution_pass_rate, baseline_pass_rate, delta, verdict |
+```json
+{"stage": "evaluated", "verdict": "pass",
+ "evaluation": {"execution_pass_rate": 0.80, "baseline_pass_rate": 0.60, "delta": 0.20},
+ "candidate_results": [{"task_id": "t1", "passed": true, "score": 1.0}],
+ "next_step": "gate_decision", "next_owner": "gate"}
+```
 
 ## Related Skills
-- **improvement-discriminator**: Semantic scoring (stage before evaluator)
-- **improvement-gate**: Quality gate (stage after evaluator)
-- **improvement-orchestrator**: Full pipeline coordination
 
-
-## Quick Start
-
-```bash
-# TODO: Add usage examples
-```
+- **improvement-discriminator**: Provides scores; evaluator checks `score >= eval_threshold`
+- **improvement-gate**: RegressionGate checks evaluator verdict via `--evaluation` artifact
+- **improvement-orchestrator**: Calls evaluator as stage 3; runs standalone baseline, injects failures to generator
+- **improvement-generator**: Consumes baseline-failures.json for targeted SKILL.md fixes
