@@ -187,7 +187,18 @@ class DoubtGate(GateLayer):
     HEDGING_WORDS_ZH = (
         "可能", "也许", "或许", "大概", "应该会", "试试看", "不确定",
     )
-    THRESHOLD = 2  # max hedging words before rejection
+    # Threshold varies by category: prompt/workflow candidates legitimately
+    # use words like "consider" and "should help", so they get a higher bar.
+    CATEGORY_THRESHOLDS = {
+        "docs": 2,
+        "reference": 2,
+        "guardrail": 2,
+        "prompt": 4,      # prompt candidates often discuss tradeoffs
+        "workflow": 4,
+        "tests": 3,
+        "code": 3,
+    }
+    DEFAULT_THRESHOLD = 3
 
     def __init__(self):
         super().__init__("doubt", required=True)
@@ -204,10 +215,14 @@ class DoubtGate(GateLayer):
             if word in text:
                 hits.append(word)
 
-        if len(hits) >= self.THRESHOLD:
+        category = candidate.get("category", "")
+        threshold = self.CATEGORY_THRESHOLDS.get(category, self.DEFAULT_THRESHOLD)
+
+        if len(hits) >= threshold:
             return {
                 "passed": False,
-                "details": f"Speculative language detected ({len(hits)} hits: {', '.join(hits[:5])}). "
+                "details": f"Speculative language detected ({len(hits)} hits, threshold={threshold} "
+                           f"for {category or 'unknown'} category: {', '.join(hits[:5])}). "
                            f"Provide evidence instead of hedging.",
                 "layer": self.name,
             }

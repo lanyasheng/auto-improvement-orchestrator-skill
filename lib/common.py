@@ -27,6 +27,89 @@ PROTECTED_KEYWORDS = (
     "openclaw-company-orchestration-proposal",
 )
 
+# Per-category dimension weights from evaluation-standards.md v2.0.0
+# Keys: accuracy, coverage, reliability, efficiency, security
+CATEGORY_WEIGHTS: dict[str, dict[str, float]] = {
+    "tool": {"accuracy": 0.25, "coverage": 0.15, "reliability": 0.30, "efficiency": 0.15, "security": 0.15},
+    "knowledge": {"accuracy": 0.40, "coverage": 0.20, "reliability": 0.10, "efficiency": 0.20, "security": 0.10},
+    "orchestration": {"accuracy": 0.30, "coverage": 0.20, "reliability": 0.25, "efficiency": 0.10, "security": 0.15},
+    "review": {"accuracy": 0.35, "coverage": 0.15, "reliability": 0.25, "efficiency": 0.10, "security": 0.15},
+    "rule": {"accuracy": 0.35, "coverage": 0.20, "reliability": 0.15, "efficiency": 0.15, "security": 0.15},
+    "learning": {"accuracy": 0.25, "coverage": 0.20, "reliability": 0.30, "efficiency": 0.10, "security": 0.15},
+}
+DEFAULT_WEIGHTS: dict[str, float] = {"accuracy": 0.30, "coverage": 0.20, "reliability": 0.20, "efficiency": 0.15, "security": 0.15}
+
+# Per-category harness expectations
+CATEGORY_HARNESS_CHECKS: dict[str, list[str]] = {
+    "tool": ["atomic_write", "timeout_handling", "error_escalation", "state_persistence", "backup_rollback"],
+    "orchestration": ["atomic_write", "timeout_handling", "handoff_docs", "state_persistence", "backup_rollback"],
+    "learning": ["atomic_write", "state_persistence", "memory_flush", "backup_rollback"],
+    "review": ["timeout_handling", "error_escalation"],
+    "knowledge": [],  # pure text, no harness needed
+    "rule": [],
+}
+
+# Per-category eval thresholds (discriminator score to trigger evaluator)
+CATEGORY_EVAL_THRESHOLDS: dict[str, float] = {
+    "tool": 6.0,
+    "knowledge": 5.0,
+    "orchestration": 6.5,
+    "review": 6.0,
+    "rule": 5.5,
+    "learning": 6.0,
+}
+
+# Per-dimension Pareto regression tolerance
+DIMENSION_REGRESSION_TOLERANCE: dict[str, float] = {
+    "accuracy": 0.05,
+    "coverage": 0.05,
+    "reliability": 0.05,
+    "efficiency": 0.10,  # more lenient — efficiency often trades off with coverage
+    "security": 0.02,    # strict — security regressions are dangerous
+    "trigger_quality": 0.05,
+}
+
+
+def detect_skill_category(skill_path: Path) -> str:
+    """Detect skill category from frontmatter or directory structure.
+
+    Categories: tool, knowledge, orchestration, review, rule, learning.
+    Falls back to 'knowledge' if no scripts, 'tool' if scripts exist.
+    """
+    skill_md = skill_path / "SKILL.md" if skill_path.is_dir() else skill_path
+    if skill_md.exists():
+        try:
+            content = skill_md.read_text(encoding="utf-8")
+            if content.startswith("---") and content.count("---") >= 2:
+                fm = content.split("---", 2)[1].lower()
+                # Check explicit category in frontmatter
+                for line in fm.split("\n"):
+                    if line.strip().startswith("category:"):
+                        cat = line.split(":", 1)[1].strip().strip("\"'")
+                        if cat in CATEGORY_WEIGHTS:
+                            return cat
+                # Infer from name/description
+                if any(w in fm for w in ("orchestrat", "pipeline", "编排", "调度")):
+                    return "orchestration"
+                if any(w in fm for w in ("review", "审查", "评审", "critic")):
+                    return "review"
+                if any(w in fm for w in ("learn", "improve", "自改进", "评估")):
+                    return "learning"
+                if any(w in fm for w in ("rule", "guardrail", "规则", "约束")):
+                    return "rule"
+        except OSError:
+            pass
+
+    # Fallback: scripts → tool, no scripts → knowledge
+    if skill_path.is_dir() and (skill_path / "scripts").exists():
+        return "tool"
+    return "knowledge"
+
+
+def get_weights_for_category(category: str) -> dict[str, float]:
+    """Get dimension weights for a skill category."""
+    return CATEGORY_WEIGHTS.get(category, DEFAULT_WEIGHTS)
+
 # ---------------------------------------------------------------------------
 # Timestamp helpers
 # ---------------------------------------------------------------------------

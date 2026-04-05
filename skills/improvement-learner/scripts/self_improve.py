@@ -398,22 +398,20 @@ def _extract_description_text(fm_section: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _check_harness_patterns(skill_path: Path, skill_md_content: str, has_scripts: bool) -> float:
-    """Check adoption of execution-harness patterns relevant to this skill.
+    """Check adoption of execution-harness patterns relevant to this skill's category.
 
-    Only applies to skills with scripts (orchestration/tool type).
-    Pure-text knowledge skills don't need harness patterns.
-
-    Checks (each worth equal weight):
-    1. Atomic writes: does the skill use write_json/write_text from lib/common?
-    2. Error handling: does it handle subprocess timeouts?
-    3. Backup/rollback: does it create backups before modifications?
-    4. State persistence: does it write state to disk for crash recovery?
-    5. Hedging detection: does it validate candidate quality (not just structure)?
+    Uses CATEGORY_HARNESS_CHECKS to determine which patterns are expected.
+    Knowledge/rule type skills have no harness requirements (return 1.0).
+    Tool/orchestration/learning type skills are checked against their specific list.
     """
-    if not has_scripts:
-        return 1.0  # not applicable
+    from lib.common import detect_skill_category, CATEGORY_HARNESS_CHECKS
 
-    checks: list[bool] = []
+    category = detect_skill_category(skill_path)
+    expected_checks = CATEGORY_HARNESS_CHECKS.get(category, [])
+
+    if not expected_checks or not has_scripts:
+        return 1.0  # no harness required for this category
+
     all_py = ""
     for f in skill_path.rglob("*.py"):
         if "__pycache__" in str(f) or "test_" in f.name:
@@ -424,37 +422,28 @@ def _check_harness_patterns(skill_path: Path, skill_md_content: str, has_scripts
             pass
 
     if not all_py:
-        return 0.5  # has scripts/ dir but no .py files
+        return 0.5
 
-    # 1. Uses shared write utilities (atomic writes)
-    checks.append("write_json" in all_py or "write_text" in all_py)
-
-    # 2. Handles subprocess timeouts
-    checks.append("TimeoutExpired" in all_py or "timeout=" in all_py)
-
-    # 3. Has backup/rollback mechanism
-    checks.append(
-        "backup" in all_py.lower()
-        or "rollback" in all_py.lower()
-        or "revert" in all_py.lower()
-    )
-
-    # 4. State persistence (writes state files for crash recovery)
-    checks.append(
-        "state" in all_py.lower()
-        and ("json" in all_py.lower() or "write_" in all_py)
-    )
-
-    # 5. SKILL.md documents error/failure handling
     skill_lower = skill_md_content.lower()
-    checks.append(
-        "error" in skill_lower
-        or "fail" in skill_lower
-        or "rollback" in skill_lower
-        or "retry" in skill_lower
-    )
+    results: list[bool] = []
 
-    return sum(checks) / len(checks) if checks else 0.5
+    # Check only the patterns expected for this skill category
+    check_map = {
+        "atomic_write": lambda: "write_json" in all_py or "write_text" in all_py,
+        "timeout_handling": lambda: "TimeoutExpired" in all_py or "timeout=" in all_py,
+        "backup_rollback": lambda: any(w in all_py.lower() for w in ("backup", "rollback", "revert")),
+        "state_persistence": lambda: "state" in all_py.lower() and ("json" in all_py.lower() or "write_" in all_py),
+        "error_escalation": lambda: "error" in skill_lower or "fail" in skill_lower or "retry" in skill_lower,
+        "handoff_docs": lambda: "handoff" in all_py.lower() or "handoff" in skill_lower,
+        "memory_flush": lambda: "flush" in all_py.lower() or "snapshot" in all_py.lower(),
+    }
+
+    for check_name in expected_checks:
+        checker = check_map.get(check_name)
+        if checker:
+            results.append(checker())
+
+    return sum(results) / len(results) if results else 1.0
 
 
 def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:

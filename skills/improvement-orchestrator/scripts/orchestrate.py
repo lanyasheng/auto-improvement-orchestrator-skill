@@ -386,11 +386,15 @@ def run_pipeline(
         )
         if skip_eval:
             print(f"  Evaluator: skipped (low-risk {best.get('category')} candidate)")
+        # Category-aware eval threshold
+        from lib.common import CATEGORY_EVAL_THRESHOLDS
+        cat_threshold = CATEGORY_EVAL_THRESHOLDS.get(best.get("category", ""), 6.0)
         eval_result = None if skip_eval else run_evaluator(
             ranking_artifact_path,
             candidate_id,
             state_root,
             task_suite=task_suite,
+            eval_threshold=cat_threshold,
             mock=eval_mock,
         )
         eval_artifact_path: str | None = None
