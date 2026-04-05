@@ -6,7 +6,7 @@ Closed-loop pipeline that evaluates, improves, and continuously optimizes AI age
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
-**15 pipeline skills | 20K+ lines Python | 390+ tests | pyyaml + pytest only**
+**15 skills | 8,000+ lines Python | 409 tests | pyyaml + pytest only**
 
 ```mermaid
 graph LR
@@ -102,7 +102,7 @@ This project solves three problems:
 
 ## Architecture
 
-12 pipeline skills + 3 evaluation signals compose into a closed-loop pipeline:
+15 skills + 3 evaluation signals compose into a closed-loop pipeline:
 
 ```
                         +-----------+
@@ -121,7 +121,7 @@ This project solves three problems:
                               |
                               v
                         +------+
-                        | gate |  (4) 6-layer quality gate
+                        | gate |  (4) 7-layer quality gate
                         +--+---+
                               |
                               v
@@ -209,7 +209,7 @@ See `skills/improvement-evaluator/references/task-format.md` for the full specif
 
 ### Stage 4: Gate
 
-6-layer mechanical gate. Any layer fail = reject.
+7-layer mechanical gate. Any layer fail = reject.
 
 | Layer | Pass Condition |
 |-------|---------------|
@@ -304,7 +304,7 @@ skills/
   improvement-generator/     # Stage 1: Propose candidates
   improvement-discriminator/ # Stage 2: Multi-reviewer scoring
   improvement-evaluator/     # Stage 3: Execution effectiveness
-  improvement-gate/          # Stage 4: 6-layer quality gate
+  improvement-gate/          # Stage 4: 7-layer quality gate
   improvement-executor/      # Stage 5: Apply with backup/rollback
   improvement-learner/       # Stage 6: Karpathy self-improvement loop
   improvement-orchestrator/  # Pipeline coordinator
