@@ -174,6 +174,14 @@ Step 3: (可选) 如有 task_suite.yaml → 跑 evaluator 执行验证
 - 重叠只在 frontmatter description 层面，body 内容完全不同
 - 合并后 SKILL.md body 会超 500 行
 
+### Harness 配置合并
+
+如果任一源 skill 包含 execution-harness 配置（Ralph 状态、Handoff 模板、Hook 声明），distill 必须：
+
+1. 合并 harness 配置到蒸馏版——取所有源的 pattern 并集
+2. 冲突时取更严格的配置（如 max_iterations 取最小值）
+3. 在 SKILL.md 的 Related Skills 中注明依赖的 harness pattern
+
 ### 蒸馏质量检查
 
 | 检查项 | 标准 |
@@ -183,6 +191,7 @@ Step 3: (可选) 如有 task_suite.yaml → 跑 evaluator 执行验证
 | 来源可追溯 | 每个 section 标注来自哪个源 skill |
 | learner 评分 | accuracy ≥ 0.80 |
 | 路由不冲突 | triggers 不和其他 skill 重叠 |
+| harness 完整 | 源 skill 的 harness pattern 全部保留 |
 
 ## Output Artifacts
 

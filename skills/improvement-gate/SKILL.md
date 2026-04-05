@@ -29,7 +29,7 @@ author: OpenClaw Team
 - **执行文件变更** → use `improvement-executor`
 - **评估 skill 结构** → use `improvement-learner`
 
-## 6-Layer Gate
+## 7-Layer Gate
 
 | Layer | Gate | Pass Condition |
 |-------|------|---------------|
@@ -38,7 +38,8 @@ author: OpenClaw Team
 | 3 | **LintGate** | No new lint warnings introduced |
 | 4 | **RegressionGate** | No Pareto dimension regressed beyond 5% |
 | 5 | **ReviewGate** | Multi-reviewer consensus is not DISPUTED+reject |
-| 6 | **HumanReviewGate** | High-risk candidates require manual approval |
+| 6 | **DoubtGate** | Candidate description has < 2 hedging words (execution-harness Pattern 13) |
+| 7 | **HumanReviewGate** | High-risk candidates require manual approval |
 
 <example>
 正确: gate 返回 pending → 查看待审队列 → 人工审批

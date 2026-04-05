@@ -33,15 +33,15 @@ Coordinates the full improvement pipeline: Generator → Discriminator → Evalu
 ## Pipeline
 
 ```
-propose → discriminate → evaluate* → execute → gate
+propose → discriminate → evaluate* → execute → gate (7-layer)
          ↻ Ralph Wiggum: fail → inject trace → retry (max 3)
-         * evaluate is optional — skipped if no task_suite.yaml exists
+         * evaluate skipped if: no task_suite.yaml, OR low-risk docs/reference/guardrail candidate (adaptive complexity)
 ```
 
 <example>
 正确用法: 对一个 skill 运行全流程改进
 $ python3 scripts/orchestrate.py --target /path/to/skill --state-root /tmp/state
-→ 自动完成: 生成候选 → 多人盲审 → 任务评估 → 执行变更 → 6层门禁
+→ 自动完成: 生成候选 → 多人盲审 → 任务评估 → 执行变更 → 7层门禁
 → 失败时自动注入 trace 重试（最多 3 次）
 </example>
 

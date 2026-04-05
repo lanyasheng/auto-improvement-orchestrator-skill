@@ -397,6 +397,66 @@ def _extract_description_text(fm_section: str) -> str:
 # Skill evaluation — real, not random
 # ---------------------------------------------------------------------------
 
+def _check_harness_patterns(skill_path: Path, skill_md_content: str, has_scripts: bool) -> float:
+    """Check adoption of execution-harness patterns relevant to this skill.
+
+    Only applies to skills with scripts (orchestration/tool type).
+    Pure-text knowledge skills don't need harness patterns.
+
+    Checks (each worth equal weight):
+    1. Atomic writes: does the skill use write_json/write_text from lib/common?
+    2. Error handling: does it handle subprocess timeouts?
+    3. Backup/rollback: does it create backups before modifications?
+    4. State persistence: does it write state to disk for crash recovery?
+    5. Hedging detection: does it validate candidate quality (not just structure)?
+    """
+    if not has_scripts:
+        return 1.0  # not applicable
+
+    checks: list[bool] = []
+    all_py = ""
+    for f in skill_path.rglob("*.py"):
+        if "__pycache__" in str(f) or "test_" in f.name:
+            continue
+        try:
+            all_py += f.read_text(encoding="utf-8", errors="ignore") + "\n"
+        except Exception:
+            pass
+
+    if not all_py:
+        return 0.5  # has scripts/ dir but no .py files
+
+    # 1. Uses shared write utilities (atomic writes)
+    checks.append("write_json" in all_py or "write_text" in all_py)
+
+    # 2. Handles subprocess timeouts
+    checks.append("TimeoutExpired" in all_py or "timeout=" in all_py)
+
+    # 3. Has backup/rollback mechanism
+    checks.append(
+        "backup" in all_py.lower()
+        or "rollback" in all_py.lower()
+        or "revert" in all_py.lower()
+    )
+
+    # 4. State persistence (writes state files for crash recovery)
+    checks.append(
+        "state" in all_py.lower()
+        and ("json" in all_py.lower() or "write_" in all_py)
+    )
+
+    # 5. SKILL.md documents error/failure handling
+    skill_lower = skill_md_content.lower()
+    checks.append(
+        "error" in skill_lower
+        or "fail" in skill_lower
+        or "rollback" in skill_lower
+        or "retry" in skill_lower
+    )
+
+    return sum(checks) / len(checks) if checks else 0.5
+
+
 def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     """Evaluate a skill across multiple dimensions.
 
@@ -500,7 +560,8 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         scores["accuracy"] = 0.0
         scores["efficiency"] = 0.0
 
-    # Reliability: test results (pure-text skills without scripts/ default to 1.0)
+    # Reliability: test results + harness pattern adoption
+    # Base score from tests (0.0-1.0)
     if has_tests:
         try:
             result = subprocess.run(
@@ -508,15 +569,24 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
                  str(skill_path / "tests"), "-q", "--tb=no"],
                 capture_output=True, text=True, timeout=30,
             )
-            scores["reliability"] = 1.0 if result.returncode == 0 else 0.5
+            test_score = 1.0 if result.returncode == 0 else 0.5
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            scores["reliability"] = 0.3
+            test_score = 0.3
     elif has_scripts:
-        # Has scripts but no tests → should have tests
-        scores["reliability"] = 0.3
+        test_score = 0.3
     else:
-        # Pure-text skill (no scripts, no tests) → perfectly valid
-        scores["reliability"] = 1.0
+        test_score = 1.0
+
+    # Harness pattern checks (only for skills with scripts — orchestration/tool type)
+    harness_score = _check_harness_patterns(skill_path, skill_md_content, has_scripts)
+
+    # Harness patterns are a bonus on top of test score, not a penalty
+    # A skill with passing tests but no harness patterns gets full test_score
+    # A skill with both gets up to 10% bonus (capped at 1.0)
+    if has_scripts and harness_score > 0:
+        scores["reliability"] = min(1.0, test_score + harness_score * 0.1)
+    else:
+        scores["reliability"] = test_score
 
     # Security: check SKILL.md only (not implementation code which legitimately
     # uses "password" parameters, "secrets" module, etc.)

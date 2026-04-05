@@ -57,8 +57,14 @@ python3 scripts/autoloop.py --target <skill_path> --state-root <dir> --max-itera
 ## Output Artifacts
 | Request | Deliverable |
 |---------|------------|
-| Run loop | autoloop_state.json + iteration_log.jsonl |
+| Run loop | autoloop_state.json + iteration_log.jsonl + handoffs/iteration-N.md |
 | Check status | Current state with scores and termination reason |
+
+## Execution-Harness Patterns Used
+
+- **Handoff Documents (Pattern 2)**: Each iteration writes `handoffs/iteration-N.md` with Decided/Rejected/Scores/Remaining for cross-iteration context survival
+- **Atomic Writes (Pattern 6)**: State files use write-then-rename via `lib/common.py`
+- **User Feedback Plateau (Pattern extension)**: `detect_user_feedback_plateau()` stops the loop when correction_rate stops decreasing
 
 ## Related Skills
 - **improvement-orchestrator**: Single pipeline run (wrapped by this skill)

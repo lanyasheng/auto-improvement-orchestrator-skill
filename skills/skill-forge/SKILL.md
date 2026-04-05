@@ -90,6 +90,18 @@ Tasks are deduplicated and capped at 10 per suite.
 - Scenario requiring quality/style assessment → `LLMRubricJudge`
 - Scenario with structured output → `PytestJudge` (if test script can be generated)
 
+### Harness Pattern Tasks (for scripted skills)
+
+When the target skill has a `scripts/` directory, forge auto-generates additional test tasks checking execution-harness pattern adoption:
+
+- **Timeout handling**: Does the skill handle `subprocess.TimeoutExpired`?
+- **Atomic writes**: Does it use `write_json`/`write_text` from `lib/common` (atomic write-then-rename)?
+- **Backup/rollback**: Does it create backups before file modifications?
+- **Error escalation**: Does it have graduated error handling (not just crash-on-first-failure)?
+- **State persistence**: Does it write recoverable state for crash recovery?
+
+These tasks use `ContainsJudge` to grep the skill's Python source code. They only apply to orchestration/tool-type skills — pure-text knowledge skills skip this category.
+
 ### Null-Skill Calibration
 
 Tasks that a "null skill" (empty context, no SKILL.md loaded) would trivially pass are filtered out. This prevents inflated scores from tasks that test general LLM capability rather than the skill's specific value.
