@@ -9,6 +9,8 @@ triggers:
   - 持续改进
   - 自动循环
   - 一直优化
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Autoloop Controller
