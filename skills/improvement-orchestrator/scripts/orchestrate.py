@@ -9,16 +9,14 @@ and feed it back into the next proposal round.
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-REPO_ROOT = _REPO_ROOT
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from lib.common import read_json, utc_now_iso, write_json
 
@@ -56,11 +54,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Max retry attempts on revert (default: 3)",
     )
     parser.add_argument(
-        "--auto",
-        action="store_true",
-        help="Run full pipeline without pausing",
-    )
-    parser.add_argument(
         "--task-suite",
         help="Path to task_suite.yaml for evaluator (enables real LLM evaluation)",
     )
@@ -77,36 +70,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 
-def run_script(script_path, args, label):
-    """Run a role script and return the artifact path it produced."""
-    cmd = [sys.executable, str(script_path)] + args
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"{label} failed (exit {result.returncode}):\n"
-            f"  stderr: {result.stderr.strip()}\n"
-            f"  stdout: {result.stdout.strip()}"
-        )
-    lines = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
-    if not lines:
-        raise RuntimeError(f"{label} produced no output on stdout")
-    raw_path = lines[-1]
-    artifact_path = Path(raw_path)
-    if artifact_path.is_absolute() and artifact_path.exists():
-        return artifact_path
-    for prefix in [Path.cwd(), REPO_ROOT]:
-        candidate = prefix / raw_path
-        if candidate.exists():
-            return candidate.resolve()
-    return artifact_path
-
-
-def _run_script(cmd: list[str], label: str) -> str:
+def _run_script(cmd: list[str], label: str, timeout: int = 1200) -> str:
     """Run a subprocess and return its stdout (stripped).
 
-    Raises RuntimeError on non-zero exit.
+    Raises RuntimeError on non-zero exit or timeout.
     """
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{label} timed out after {timeout}s")
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} failed (exit {result.returncode}):\n"
@@ -221,6 +193,7 @@ def run_gate(
     ranking_artifact_path: str,
     execution_artifact_path: str,
     state_root: str,
+    evaluation_artifact_path: str | None = None,
 ) -> dict[str, Any]:
     """Call gate.py and return the gate receipt."""
     cmd = [
@@ -233,6 +206,8 @@ def run_gate(
         "--state-root",
         str(state_root),
     ]
+    if evaluation_artifact_path:
+        cmd.extend(["--evaluation", str(evaluation_artifact_path)])
     artifact_path = _run_script(cmd, "gate")
     return read_json(Path(artifact_path))
 
@@ -411,6 +386,9 @@ def run_pipeline(
             task_suite=task_suite,
             mock=eval_mock,
         )
+        eval_artifact_path: str | None = None
+        if eval_result:
+            eval_artifact_path = eval_result.get("truth_anchor")
         if eval_result and eval_result.get("verdict") == "fail":
             # Evaluation failed — treat as revert and retry
             trace = {
@@ -435,11 +413,12 @@ def run_pipeline(
         )
         execution_artifact_path = execution_artifact.get("truth_anchor", "")
 
-        # 5. GATE (verify after execution)
+        # 5. GATE (verify after execution, forwarding evaluator data)
         receipt = run_gate(
             ranking_artifact_path,
             execution_artifact_path,
             state_root,
+            evaluation_artifact_path=eval_artifact_path,
         )
 
         # 6. DECIDE
@@ -520,6 +499,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print_summary(summary)
+    # Write machine-readable output for downstream consumers
+    summary_path = Path(state_root) / "pipeline-summary.json"
+    write_json(summary_path, summary)
+    print(str(summary_path))
     return 0
 
 

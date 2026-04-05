@@ -342,6 +342,38 @@ def _llm_propose_skill_fix(target: Path, failed_tasks: list[dict]) -> dict | Non
         return None
 
 
+def _find_correction_hotspots(feedback_entries: list[dict]) -> dict[str, int]:
+    """Extract user correction hotspots from feedback.jsonl source entries.
+
+    Returns a dimension -> count mapping of the most-corrected dimensions.
+    """
+    hotspots: dict[str, int] = {}
+    for entry in feedback_entries:
+        if not isinstance(entry, dict):
+            continue
+        entry_path = entry.get("path", "")
+        if "feedback" not in entry_path or not entry_path.endswith(".jsonl"):
+            continue
+        try:
+            import json as _json
+            with open(entry_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = _json.loads(line)
+                    except _json.JSONDecodeError:
+                        continue
+                    if event.get("outcome") in ("correction", "partial"):
+                        dim = event.get("dimension_hint")
+                        if dim:
+                            hotspots[dim] = hotspots.get(dim, 0) + 1
+        except OSError:
+            continue
+    return hotspots
+
+
 def generate_candidates(target: Path, feedback_entries: list[dict], max_candidates: int) -> list[dict]:
     # Check for evaluator failure data first — this is the highest-signal input
     eval_failures = _find_evaluator_failures(feedback_entries)

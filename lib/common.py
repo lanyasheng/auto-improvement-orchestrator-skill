@@ -100,7 +100,7 @@ def load_source_paths(target: Path, explicit_sources: Iterable[str] | None = Non
         source = Path(raw).expanduser()
         if source.exists():
             sources.append(source.resolve())
-    candidates = [target / "memory", target / "learnings", target / ".feedback"]
+    candidates = [target / "memory", target / "learnings", target / ".feedback", target / "feedback-store"]
     for candidate in candidates:
         if candidate.exists():
             sources.append(candidate.resolve())
@@ -121,7 +121,7 @@ def expand_source(source: Path) -> list[dict[str, Any]]:
     for child in sorted(source.rglob("*")):
         if not child.is_file():
             continue
-        if child.suffix.lower() not in {".md", ".txt", ".json", ".log"}:
+        if child.suffix.lower() not in {".md", ".txt", ".json", ".jsonl", ".log"}:
             continue
         entries.append(load_source_entry(child))
     return entries

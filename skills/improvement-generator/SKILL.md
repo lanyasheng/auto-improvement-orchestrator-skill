@@ -7,6 +7,8 @@ triggers:
   - propose improvements
   - 生成候选
   - 改进建议
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Generator

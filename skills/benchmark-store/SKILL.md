@@ -9,6 +9,8 @@ triggers:
   - evaluation standards
   - 基准数据
   - 质量分级
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Benchmark Store

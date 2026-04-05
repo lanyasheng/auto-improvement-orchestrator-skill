@@ -1,7 +1,7 @@
 [project]
 name = "auto-improvement-skills"
 version = "0.2.0"
-description = "Self-improvement orchestration skills for OpenClaw"
+description = "Closed-loop pipeline that evaluates, improves, and continuously optimizes AI Agent Skills"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
@@ -17,4 +17,4 @@ testpaths = ["skills"]
 
 [build-system]
 requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"

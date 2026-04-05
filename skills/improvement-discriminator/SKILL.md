@@ -9,6 +9,8 @@ triggers:
   - LLM judge
   - 候选打分
   - 盲审
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Discriminator

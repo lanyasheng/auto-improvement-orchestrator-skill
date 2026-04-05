@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -467,7 +467,7 @@ class TestRunScript:
 
 
 class TestRunScriptNew:
-    """Tests for the new run_script function."""
+    """Tests for the _run_script subprocess helper."""
 
     def test_raises_on_nonzero_exit(self):
         mock_result = MagicMock()
@@ -476,41 +476,25 @@ class TestRunScriptNew:
         mock_result.stderr = "traceback: something broke"
         with patch("subprocess.run", return_value=mock_result):
             with pytest.raises(RuntimeError, match="executor failed"):
-                orchestrate.run_script(Path("fake.py"), [], "executor")
+                orchestrate._run_script(["fake"], "executor")
 
-    def test_raises_on_empty_stdout(self):
+    def test_returns_empty_string_on_whitespace_stdout(self):
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_result.stdout = "   \n  \n  "
         mock_result.stderr = ""
         with patch("subprocess.run", return_value=mock_result):
-            with pytest.raises(RuntimeError, match="produced no output"):
-                orchestrate.run_script(Path("fake.py"), [], "scorer")
+            result = orchestrate._run_script(["fake"], "scorer")
+        assert result == ""
 
-    def test_returns_absolute_path_when_exists(self, tmp_path):
-        artifact = tmp_path / "artifact.json"
-        artifact.write_text("{}")
+    def test_returns_stdout_stripped(self):
         mock_result = MagicMock()
         mock_result.returncode = 0
-        mock_result.stdout = f"  \n{artifact}\n"
+        mock_result.stdout = "  /some/artifact.json  \n"
         mock_result.stderr = ""
         with patch("subprocess.run", return_value=mock_result):
-            result = orchestrate.run_script(Path("fake.py"), ["--flag"], "proposer")
-        assert result == artifact
-
-    def test_resolves_relative_path_via_cwd(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        artifact = tmp_path / "out" / "result.json"
-        artifact.parent.mkdir()
-        artifact.write_text("{}")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "out/result.json\n"
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result):
-            result = orchestrate.run_script(Path("fake.py"), [], "gate")
-        assert result.exists()
-        assert result.name == "result.json"
+            result = orchestrate._run_script(["fake"], "proposer")
+        assert result == "/some/artifact.json"
 
     def test_stderr_included_in_error_message(self):
         mock_result = MagicMock()
@@ -519,17 +503,13 @@ class TestRunScriptNew:
         mock_result.stderr = "ImportError: no module named foo"
         with patch("subprocess.run", return_value=mock_result):
             with pytest.raises(RuntimeError) as exc_info:
-                orchestrate.run_script(Path("fake.py"), [], "proposer")
+                orchestrate._run_script(["fake"], "proposer")
         assert "ImportError: no module named foo" in str(exc_info.value)
 
-    def test_returns_path_even_when_nonexistent(self):
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "/nonexistent/artifact.json\n"
-        mock_result.stderr = ""
-        with patch("subprocess.run", return_value=mock_result):
-            result = orchestrate.run_script(Path("fake.py"), [], "executor")
-        assert result == Path("/nonexistent/artifact.json")
+    def test_timeout_raises_runtime_error(self):
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("cmd", 60)):
+            with pytest.raises(RuntimeError, match="timed out"):
+                orchestrate._run_script(["fake"], "test", timeout=60)
 
 # ---------------------------------------------------------------------------
 # Tests: CLI parse_args
@@ -545,7 +525,6 @@ class TestParseArgs:
         assert args.target == "/some/skill"
         assert args.state_root == "/some/state"
         assert args.max_retries == 3
-        assert args.auto is False
         assert args.source == []
 
     def test_all_args(self):
@@ -555,8 +534,6 @@ class TestParseArgs:
             "--source", "/b.md",
             "--state-root", "/some/state",
             "--max-retries", "5",
-            "--auto",
         ])
         assert args.source == ["/a.md", "/b.md"]
         assert args.max_retries == 5
-        assert args.auto is True

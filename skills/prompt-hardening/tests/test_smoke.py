@@ -1,5 +1,8 @@
-"""Auto-generated smoke test."""
+"""Smoke test for prompt-hardening skill."""
 
-def test_skill_directory_exists():
-    from pathlib import Path
-    assert Path(r"/Users/sly/.openclaw/skills/prompt-hardening").exists()
+from pathlib import Path
+
+
+def test_skill_md_exists():
+    skill_dir = Path(__file__).resolve().parents[1]
+    assert (skill_dir / "SKILL.md").exists()

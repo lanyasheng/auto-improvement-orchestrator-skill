@@ -17,14 +17,13 @@ jobs:
       - run: pip install flake8
       - name: Lint lib/
         run: flake8 lib/ --max-line-length=120
-      - name: Lint all skill scripts
+      - name: Lint all skill scripts and interfaces
         run: |
-          for skill in improvement-orchestrator improvement-generator improvement-discriminator improvement-executor improvement-gate benchmark-store improvement-learner; do
-            echo "=== Linting skills/$skill ==="
-            flake8 skills/$skill/scripts/ --max-line-length=120
+          for dir in skills/*/scripts/ skills/*/interfaces/; do
+            [ -d "$dir" ] || continue
+            echo "=== Linting $dir ==="
+            flake8 "$dir" --max-line-length=120
           done
-      - name: Lint discriminator interfaces
-        run: flake8 skills/improvement-discriminator/interfaces/ --max-line-length=120
 
   test:
     runs-on: ubuntu-latest
@@ -40,8 +39,10 @@ jobs:
       - name: Verify mock elimination
         run: |
           echo "Checking for hardcoded mock scores..."
-          ! grep -rn "random\.uniform" skills/*/scripts/*.py skills/*/interfaces/*.py || echo "::warning::Found random.uniform"
-          ! grep -rn '"score": 0.85' skills/*/scripts/*.py || true
+          ! grep -rn "random\.uniform" skills/*/scripts/*.py skills/*/interfaces/*.py || echo "::warning::Found random.uniform usage"
+          if grep -rn '"score": 0.85' skills/*/scripts/*.py; then
+            echo "::warning::Found hardcoded score 0.85"
+          fi
 
   security:
     runs-on: ubuntu-latest

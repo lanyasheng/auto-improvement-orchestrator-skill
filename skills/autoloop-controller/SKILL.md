@@ -64,3 +64,10 @@ python3 scripts/autoloop.py --target <skill_path> --state-root <dir> --max-itera
 - **improvement-orchestrator**: Single pipeline run (wrapped by this skill)
 - **improvement-learner**: Quality scoring (consumed by this skill)
 - **benchmark-store**: Pareto front data
+
+
+## Quick Start
+
+```bash
+# TODO: Add usage examples
+```

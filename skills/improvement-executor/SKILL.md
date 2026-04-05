@@ -8,6 +8,8 @@ triggers:
   - rollback change
   - 执行变更
   - 回滚
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Executor

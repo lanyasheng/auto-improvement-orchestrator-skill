@@ -1,6 +1,6 @@
 ---
 name: improvement-orchestrator
-description: "当需要一键跑完「生成→评分→门禁→执行→学习」全流程、失败后自动重试、或批量改进多个 skill 时使用。不用于单独评估 skill 质量（用 improvement-learner）或手动打分（用 improvement-discriminator）。"
+description: "当需要一键跑完「生成→评分→评估→执行→门禁」全流程、失败后自动重试、或批量改进多个 skill 时使用。不用于单独评估 skill 质量（用 improvement-learner）或手动打分（用 improvement-discriminator）。"
 license: MIT
 triggers:
   - improve skill
@@ -9,16 +9,18 @@ triggers:
   - orchestrate improvement
   - 批量改进
   - 一键优化
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Orchestrator
 
-Coordinates the full improvement pipeline: Generator → Discriminator → Gate → Executor → Learner.
+Coordinates the full improvement pipeline: Generator → Discriminator → Evaluator → Executor → Gate.
 
 ## When to Use
 
 - Run a full improvement cycle on one or more skills
-- Coordinate the 5-stage pipeline end-to-end
+- Coordinate the 5-stage pipeline end-to-end (with optional evaluator)
 - Retry failed improvements with trace-aware feedback (Ralph Wiggum loop)
 
 ## When NOT to Use
@@ -31,14 +33,15 @@ Coordinates the full improvement pipeline: Generator → Discriminator → Gate 
 ## Pipeline
 
 ```
-propose → discriminate → gate → execute → learn
+propose → discriminate → evaluate* → execute → gate
          ↻ Ralph Wiggum: fail → inject trace → retry (max 3)
+         * evaluate is optional — skipped if no task_suite.yaml exists
 ```
 
 <example>
 正确用法: 对一个 skill 运行全流程改进
 $ python3 scripts/orchestrate.py --target /path/to/skill --state-root /tmp/state
-→ 自动完成: 生成候选 → 多人盲审 → 6层门禁 → 执行变更 → 记录结果
+→ 自动完成: 生成候选 → 多人盲审 → 任务评估 → 执行变更 → 6层门禁
 → 失败时自动注入 trace 重试（最多 3 次）
 </example>
 
@@ -69,9 +72,9 @@ python3 scripts/orchestrate.py \
 
 - **improvement-generator**: Produces candidate proposals (stage 1)
 - **improvement-discriminator**: Multi-reviewer panel scoring (stage 2)
-- **improvement-gate**: 6-layer quality gate (stage 3)
+- **improvement-evaluator**: Task suite execution validation (stage 3, optional)
 - **improvement-executor**: Applies changes with backup/rollback (stage 4)
-- **improvement-learner**: Karpathy self-improvement loop (stage 5)
+- **improvement-gate**: 6-layer quality gate (stage 5)
 - **benchmark-store**: Frozen benchmarks and Pareto front data
 
 ## References

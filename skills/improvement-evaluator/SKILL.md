@@ -57,3 +57,10 @@ python3 scripts/evaluate.py --input <ranking.json> --candidate-id <id> --task-su
 - **improvement-discriminator**: Semantic scoring (stage before evaluator)
 - **improvement-gate**: Quality gate (stage after evaluator)
 - **improvement-orchestrator**: Full pipeline coordination
+
+
+## Quick Start
+
+```bash
+# TODO: Add usage examples
+```
