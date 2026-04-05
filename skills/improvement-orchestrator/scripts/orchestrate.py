@@ -378,8 +378,15 @@ def run_pipeline(
 
         candidate_id = best["id"]
 
-        # 3.5 EVALUATE (optional — skipped if no --task-suite provided)
-        eval_result = run_evaluator(
+        # 3.5 EVALUATE (optional — skipped for low-risk docs or if no task-suite)
+        # Adaptive complexity: low-risk document changes skip expensive evaluation
+        skip_eval = (
+            best.get("risk_level") == "low"
+            and best.get("category") in ("docs", "reference", "guardrail")
+        )
+        if skip_eval:
+            print(f"  Evaluator: skipped (low-risk {best.get('category')} candidate)")
+        eval_result = None if skip_eval else run_evaluator(
             ranking_artifact_path,
             candidate_id,
             state_root,

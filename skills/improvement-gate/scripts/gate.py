@@ -171,8 +171,51 @@ class ReviewGate(GateLayer):
         return {"passed": False, "details": f"Recommendation: {recommendation}", "layer": self.name}
 
 
+class DoubtGate(GateLayer):
+    """Layer 5: Reject candidates with speculative/hedging language.
+
+    Scans candidate title and description for words like "might", "could",
+    "possibly", "perhaps" that indicate the proposer isn't confident the
+    change will actually help. Candidates should provide evidence, not hopes.
+    """
+
+    HEDGING_WORDS_EN = (
+        "might", "could", "possibly", "perhaps", "maybe",
+        "potentially", "likely", "probably", "should help",
+        "may improve", "consider", "worth trying",
+    )
+    HEDGING_WORDS_ZH = (
+        "可能", "也许", "或许", "大概", "应该会", "试试看", "不确定",
+    )
+    THRESHOLD = 2  # max hedging words before rejection
+
+    def __init__(self):
+        super().__init__("doubt", required=True)
+
+    def validate(self, candidate, execution=None):
+        text = " ".join([
+            candidate.get("title", ""),
+            candidate.get("description", ""),
+            candidate.get("proposed_change_summary", ""),
+        ]).lower()
+
+        hits = []
+        for word in self.HEDGING_WORDS_EN + self.HEDGING_WORDS_ZH:
+            if word in text:
+                hits.append(word)
+
+        if len(hits) >= self.THRESHOLD:
+            return {
+                "passed": False,
+                "details": f"Speculative language detected ({len(hits)} hits: {', '.join(hits[:5])}). "
+                           f"Provide evidence instead of hedging.",
+                "layer": self.name,
+            }
+        return {"passed": True, "details": "OK", "layer": self.name}
+
+
 class HumanReviewGate(GateLayer):
-    """Layer 5 (optional): Request human review for non-trivial changes.
+    """Layer 6 (optional): Request human review for non-trivial changes.
 
     When a candidate reaches this layer, it means all mechanical gates passed
     but the change is too risky for auto-keep. This layer:
@@ -239,7 +282,7 @@ class HumanReviewGate(GateLayer):
         return {"completed": False, "reason": "still_pending"}
 
 
-DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate(), HumanReviewGate()]
+DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate(), DoubtGate(), HumanReviewGate()]
 
 
 def run_gate_layers(

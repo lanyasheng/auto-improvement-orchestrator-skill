@@ -8,6 +8,8 @@ Extracted from the original lane_common.py — contains ONLY stateless helpers
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -58,12 +60,32 @@ def read_json(path: Path) -> Any:
         return json.load(handle)
 
 
-def write_json(path: Path, payload: Any) -> Path:
+def _atomic_write(path: Path, data: bytes) -> Path:
+    """Write data to path atomically using write-then-rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.write("\n")
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        os.write(fd, data)
+        os.fsync(fd)
+        os.close(fd)
+        os.rename(tmp_path, str(path))
+    except BaseException:
+        os.close(fd) if not os.get_inheritable(fd) else None
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
     return path
+
+
+def write_json(path: Path, payload: Any) -> Path:
+    content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    return _atomic_write(path, content.encode("utf-8"))
 
 
 def read_text(path: Path) -> str:
@@ -71,9 +93,7 @@ def read_text(path: Path) -> str:
 
 
 def write_text(path: Path, content: str) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-    return path
+    return _atomic_write(path, content.encode("utf-8"))
 
 
 # ---------------------------------------------------------------------------

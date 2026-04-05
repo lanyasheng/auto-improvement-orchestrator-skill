@@ -300,6 +300,33 @@ class ThreeLayerMemory:
     def _save(self, path: Path, data: list[dict]) -> None:
         write_json(path, data)
 
+    def flush_to_disk(self, session_state_dir: Path | None = None) -> Path:
+        """Flush all in-memory patterns to disk for compaction survival.
+
+        Writes a consolidated snapshot to either a session state directory
+        (if provided) or the memory_dir itself. This ensures patterns survive
+        context compression — the file lives on disk, not in the context window.
+        """
+        target_dir = session_state_dir or self.memory_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_path = target_dir / "memory-snapshot.json"
+
+        hot = self._load(self.hot_path)
+        warm = self._load(self.warm_path)
+
+        snapshot = {
+            "timestamp": utc_now_iso(),
+            "hot_count": len(hot),
+            "warm_count": len(warm),
+            "top_patterns": sorted(hot, key=lambda x: -x.get("hit_count", 0))[:20],
+            "failed_strategies": [
+                e for e in hot
+                if not e.get("succeeded") and e.get("hit_count", 0) >= 3
+            ],
+        }
+        write_json(snapshot_path, snapshot)
+        return snapshot_path
+
 
 # ---------------------------------------------------------------------------
 # Frontmatter parsing helpers
@@ -1154,6 +1181,9 @@ def self_improve_loop(
             pareto_accepted=not pareto_result["regressed"],
             reason="kept" if kept else "reverted",
         ))
+
+        # Flush memory to disk after each iteration for compaction survival
+        memory.flush_to_disk()
 
     return generate_improvement_report(results, best_scores, memory)
 

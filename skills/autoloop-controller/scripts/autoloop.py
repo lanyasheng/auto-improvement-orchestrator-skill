@@ -34,7 +34,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.common import read_json, utc_now_iso, write_json
+from lib.common import read_json, utc_now_iso, write_json, write_text
 
 # Sibling modules
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -227,6 +227,13 @@ def run_single_iteration(
     }
     _append_iteration_log(state_root, log_entry)
 
+    # Write handoff document for cross-iteration context survival
+    prev_scores = {}
+    if len(state.score_history) >= 2:
+        prev_entry = state.score_history[-2]
+        prev_scores = prev_entry.get("scores", {})
+    _write_handoff(state_root, iteration, result, scores, prev_scores)
+
     return state, result
 
 
@@ -291,6 +298,67 @@ def _append_iteration_log(state_root: str, entry: dict) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _write_handoff(
+    state_root: str,
+    iteration: int,
+    result: dict[str, Any],
+    scores: dict[str, float],
+    prev_scores: dict[str, float],
+) -> str:
+    """Write a handoff document for cross-iteration context survival.
+
+    Returns the path to the handoff file (usable as --source for next iteration).
+    """
+    handoff_dir = Path(state_root) / "handoffs"
+    handoff_dir.mkdir(parents=True, exist_ok=True)
+    handoff_path = handoff_dir / f"iteration-{iteration}.md"
+
+    decision = result.get("final_decision", "unknown")
+    candidate_id = result.get("final_candidate_id", "N/A")
+
+    lines = [
+        f"# Iteration {iteration} Handoff",
+        "",
+        "## Decided",
+        f"- Decision: {decision}",
+        f"- Candidate: {candidate_id}",
+    ]
+
+    if decision == "keep" and candidate_id:
+        lines.append(f"- Applied candidate {candidate_id} successfully")
+
+    lines.append("")
+    lines.append("## Rejected")
+    attempts = result.get("attempts", 0)
+    if decision in ("reject", "revert"):
+        lines.append(f"- Candidate {candidate_id} was {decision}ed after {attempts} attempt(s)")
+    elif attempts > 1:
+        lines.append(f"- {attempts - 1} candidate(s) reverted before final keep")
+    else:
+        lines.append("- None")
+
+    lines.append("")
+    lines.append("## Scores")
+    for dim in sorted(set(list(scores.keys()) + list(prev_scores.keys()))):
+        cur = scores.get(dim, 0.0)
+        prev = prev_scores.get(dim, 0.0)
+        delta = cur - prev
+        sign = "+" if delta > 0 else ""
+        lines.append(f"- {dim}: {prev:.2f} → {cur:.2f} ({sign}{delta:.2f})")
+
+    lines.append("")
+    lines.append("## Remaining")
+    weak_dims = [d for d, s in scores.items() if s < 0.80]
+    if weak_dims:
+        for d in sorted(weak_dims):
+            lines.append(f"- {d}: {scores[d]:.2f} (below 0.80)")
+    else:
+        lines.append("- All dimensions above 0.80")
+
+    write_text(handoff_path, "\n".join(lines) + "\n")
+    return str(handoff_path)
 
 
 # ---------------------------------------------------------------------------

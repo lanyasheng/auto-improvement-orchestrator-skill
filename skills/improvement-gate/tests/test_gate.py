@@ -260,8 +260,8 @@ class TestRunGateLayers:
         verdict = run_gate_layers(candidate, _execution())
         assert verdict["all_passed"] is True
         assert verdict["failed_at"] is None
-        assert verdict["layers_run"] == 6
-        assert verdict["layers_total"] == 6
+        assert verdict["layers_run"] == 7
+        assert verdict["layers_total"] == 7
 
     def test_first_required_failure_stops(self):
         # Schema fails (missing fields) -> stops immediately
@@ -315,7 +315,7 @@ class TestRunGateLayers:
 class TestSelectLayers:
     def test_none_returns_all(self):
         layers = select_layers(None)
-        assert len(layers) == 6
+        assert len(layers) == 7
 
     def test_single_layer(self):
         layers = select_layers("schema")
