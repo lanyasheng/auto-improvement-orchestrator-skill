@@ -8,6 +8,8 @@ triggers:
   - execution pass rate
   - 执行效果评估
   - 任务集验证
+version: 0.1.0
+author: OpenClaw Team
 ---
 
 # Improvement Evaluator
