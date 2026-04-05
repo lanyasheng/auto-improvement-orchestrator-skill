@@ -16,76 +16,105 @@ author: OpenClaw Team
 
 # Benchmark Store
 
-Frozen benchmarks, hidden tests, Pareto front, and evaluation standards.
+Frozen benchmarks, hidden tests, Pareto front, and evaluation standards for the skill improvement pipeline. Provides immutable test suites with SHA-256 integrity verification, encrypted hidden tests to prevent overfitting, and a SQLite-backed benchmark database.
 
-## When to Use
+## When to Use / NOT to Use
 
-- 初始化或查询基准数据库
-- 对比 skill 评分与冻结基线
-- 检查 Pareto front（任何维度回退 >5% 即拒绝）
-- 查阅质量分级标准（POWERFUL/SOLID/GENERIC/WEAK）
+- Init/query benchmark database, compare skill scores against frozen baselines, check Pareto front for regression (>5% drop = reject), look up quality tiers and per-dimension weights
+- **NOT** for scoring candidates (improvement-discriminator), structural evaluation (improvement-learner), or full loop (improvement-orchestrator)
 
-## When NOT to Use
+## CLI
 
-- **给候选打分** → use `improvement-discriminator`
-- **自动改进** → use `improvement-learner`
-- **全流程** → use `improvement-orchestrator`
+```
+python3 scripts/benchmark_db.py --db-path benchmarks.db \
+  --action {add,compare,leaderboard,list,delete} \
+  [--category CAT] [--test-name NAME] [--input INPUT] \
+  [--expected-output OUT] [--metrics JSON] [--skill-path PATH]
+```
 
-## Quality Tiers
+`--db-path`: SQLite path (default: benchmarks.db). `--action`: required. `--category`: required for add/compare/leaderboard/delete. `--test-name`: required for add/delete. `--input`: required for add. `--expected-output`, `--metrics`: optional for add. `--skill-path`: required for compare (compare also needs a Python API evaluator callable).
 
-| Tier | Score | Ship? |
-|------|-------|-------|
-| POWERFUL ⭐ | ≥ 85% | Marketplace ready |
-| SOLID | 70–84% | GitHub |
-| GENERIC | 55–69% | Needs iteration |
+## Quality Tiers (from `data/evaluation-standards.md` v2.0.0)
+
+Composite: `accuracy*0.3 + coverage*0.2 + reliability*0.2 + efficiency*0.15 + security*0.15`
+
+| Tier | Score | Ship Policy |
+|------|-------|-------------|
+| POWERFUL | >= 85% | Marketplace ready |
+| SOLID | 70-84% | GitHub publishable |
+| GENERIC | 55-69% | Internal, needs iteration |
 | WEAK | < 55% | Reject or rewrite |
+
+## Per-Dimension Weight Table
+
+| Dimension | Weight | Threshold | Target |
+|-----------|--------|-----------|--------|
+| Accuracy (SKILL.md quality, 12 checks) | 0.30 | 0.80 | 0.95 |
+| Coverage (structural completeness) | 0.20 | 0.70 | 0.90 |
+| Reliability (execution consistency) | 0.20 | 0.60 | 0.85 |
+| Efficiency (time performance) | 0.15 | 0.50 | 0.80 |
+| Security (safety checks) | 0.15 | 0.50 | 0.80 |
+
+## Frozen Benchmark Suites
+
+Immutable test suites with checksum verification. Tampering detected via `suite.verify()`.
+
+```python
+from interfaces.frozen_benchmark import FrozenBenchmark, STANDARD_BENCHMARK_SUITE
+fb = FrozenBenchmark(STANDARD_BENCHMARK_SUITE)  # ValueError if integrity fails
+report = fb.run(evaluator)  # -> {summary: {pass_rate, avg_score, weighted_score}, by_category, results}
+```
+
+Standard suite: functionality (difficulty 1), reliability (difficulty 2), efficiency (difficulty 3).
+
+## Hidden Tests
+
+Encrypted test cases that stay hidden until execution. Prevents overfitting.
+Types: functional, edge_case, adversarial, security, performance, distribution.
+Visibility boundaries: evaluator / proposer / both.
+
+```python
+from interfaces.hidden_tests import HiddenTestSuite, create_hidden_test, TestType
+suite = HiddenTestSuite(suite_id="s1", name="Tests", version="1.0.0")
+suite.unlock("password")
+results = suite.run_all(skill)  # -> {summary: {total_tests, passed, pass_rate, avg_score}, by_type}
+```
 
 ## Pareto Front
 
 ```python
-ParetoFront.check_regression(new_scores) → {"regressed": bool, "regressions": [...]}
-# 5% tolerance — minor fluctuations allowed
+from lib.pareto import ParetoFront
+pf = ParetoFront("state/pareto.json")
+pf.check_regression({"accuracy": 0.9, "coverage": 0.8})
+# -> {"regressed": false, "regressions": []}  # 5% tolerance
 ```
 
 <example>
-正确: 检查 Pareto front 是否有回退
-$ python3 -c "from lib.pareto import ParetoFront; pf = ParetoFront('state/pareto.json'); print(pf.check_regression({'accuracy': 0.9, 'coverage': 0.8}))"
-→ {"regressed": false, "regressions": []}  # 无回退，可以接受
+$ python3 scripts/benchmark_db.py --db-path bench.db --action add --category tool-type \
+    --test-name "file-search" --input "Search for error in .py files"
+$ python3 scripts/benchmark_db.py --db-path bench.db --action leaderboard --category tool-type
+$ python3 scripts/benchmark_db.py --db-path bench.db --action list
 </example>
 
 <anti-example>
-错误: 用 benchmark-store 给候选打分
-→ benchmark-store 只存数据，打分用 improvement-discriminator
+benchmark-store stores baselines and runs frozen tests. To score improvement candidates, use improvement-discriminator.
 </anti-example>
-
-## CLI
-
-```bash
-# List benchmarks
-python3 scripts/benchmark_db.py --action list --db-path benchmarks.db
-
-# Compare skill against baselines
-python3 scripts/benchmark_db.py --action compare --skill-path /path/to/skill --category general --db-path benchmarks.db
-
-# Add a benchmark
-python3 scripts/benchmark_db.py --action add --category general --test-name "test1" --db-path benchmarks.db
-```
 
 ## Output Artifacts
 
 | Request | Deliverable |
-|---------|------------|
-| Init | SQLite database with schema |
-| Compare | JSON comparison with per-dimension delta |
-| Pareto check | JSON with regressed flag and details |
-
-## Related Skills
-
-- **improvement-learner**: Imports ParetoFront for self-improvement loop
-- **improvement-gate**: RegressionGate uses Pareto data
-- **improvement-discriminator**: References evaluation standards
+|---------|-------------|
+| `--action list` | Benchmarks grouped by category |
+| `--action leaderboard` | Top-N skills by best score |
+| Frozen benchmark `run()` | JSON: summary, by_category, per-case results, verified flag |
+| Hidden test `run_all()` | JSON: summary, by_type stats, per-test scores |
+| Pareto `check_regression()` | `{regressed: bool, regressions: [...]}` |
 
 ## Data Files
 
-- `data/evaluation-standards.md` — Quality tiers, dimensions, weights (v2.0.0)
-- `data/fixtures/` — Frozen test fixtures
+`data/evaluation-standards.md` (v2.0.0), `data/fixtures/`, `interfaces/frozen_benchmark.py`, `interfaces/hidden_tests.py`
+
+## Related Skills
+
+- **improvement-learner** -- imports ParetoFront | **improvement-gate** -- RegressionGate uses Pareto
+- **improvement-discriminator** -- references evaluation standards for scoring
