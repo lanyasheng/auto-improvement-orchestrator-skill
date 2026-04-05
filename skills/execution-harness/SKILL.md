@@ -21,6 +21,7 @@ triggers:
   - agent keeps stopping
   - crash recovery
   - session state
+author: OpenClaw Team
 ---
 
 # Execution Harness Patterns
