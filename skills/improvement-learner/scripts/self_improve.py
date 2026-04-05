@@ -577,26 +577,29 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     else:
         scores["reliability"] = test_score
 
-    # Security: check for actual secrets and dangerous patterns.
-    # Excludes documentation references (e.g. "sk-" mentioned in a security checklist).
-    sec_checks = []
+    # Security: gate-first design (inspired by skill-tester's "security is a door, not a score").
+    # Critical issues (hardcoded secrets, dangerous exec patterns) → all scores zeroed.
+    # Warnings (missing license, etc.) → reduce security score but don't block.
+    import re
+
+    security_issues: list[str] = []  # critical: blocks everything
+    security_warnings: list[str] = []  # advisory: reduces score
+
     if has_skill_md:
         skill_content = skill_md_content
         skill_lower = skill_content.lower()
-        # Check for actual secret assignments (not documentation references)
-        sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
-        sec_checks.append("password =" not in skill_lower and "password=" not in skill_lower)
-        # sk- check: only flag if it looks like a real key (sk- followed by 20+ alnum)
-        import re
-        sec_checks.append(not bool(re.search(r"sk-[A-Za-z0-9]{20,}", skill_content)))
-        # Has license in frontmatter?
+        # CRITICAL: real hardcoded secrets
+        if "api_key =" in skill_lower or "api_key=" in skill_lower:
+            security_issues.append("Hardcoded api_key assignment in SKILL.md")
+        if "password =" in skill_lower or "password=" in skill_lower:
+            security_issues.append("Hardcoded password assignment in SKILL.md")
+        if re.search(r"sk-[A-Za-z0-9]{20,}", skill_content):
+            security_issues.append("Real API key pattern (sk-...) in SKILL.md")
+        # WARNING: missing license
         if skill_content.count("---") >= 2:
             fm = skill_content.split("---", 2)[1]
-            sec_checks.append("license:" in fm)
-        else:
-            sec_checks.append(False)
-    else:
-        sec_checks = [False, False, False, False]
+            if "license:" not in fm:
+                security_warnings.append("Missing license in frontmatter")
 
     # Implementation code checks (only scripts, not test files)
     all_py_content = ""
@@ -607,20 +610,28 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             all_py_content += f.read_text(encoding="utf-8", errors="ignore") + "\n"
         except Exception:
             pass
-    # os.system() — dangerous, but exclude documentation strings
-    has_os_system = "os.system(" in all_py_content
-    if has_os_system:
-        # Check it's not inside a string/comment (rough heuristic: check if in a quoted line)
-        real_usage = any(
-            "os.system(" in line and not line.strip().startswith(("#", '"', "'", "|"))
-            for line in all_py_content.split("\n")
-        )
-        sec_checks.append(not real_usage)
-    else:
-        sec_checks.append(True)
-    sec_checks.append("exec(" not in all_py_content or "exec_module" in all_py_content)
 
-    scores["security"] = sum(sec_checks) / len(sec_checks) if sec_checks else 0.5
+    # CRITICAL: dangerous patterns in real code (not docs/comments)
+    for line in all_py_content.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith(("#", '"', "'", "|")):
+            continue
+        if "os.system(" in stripped:
+            security_issues.append(f"os.system() usage: {stripped[:80]}")
+        if "exec(" in stripped and "exec_module" not in stripped:
+            security_issues.append(f"exec() usage: {stripped[:80]}")
+
+    # Gate: critical issues → zero ALL scores (security is a door, not a score)
+    if security_issues:
+        for dim in scores:
+            scores[dim] = 0.0
+        scores["security"] = 0.0
+        # Store issues for reporting
+        scores["_security_issues"] = security_issues  # type: ignore[assignment]
+    else:
+        # No critical issues → score based on warnings
+        warning_penalty = len(security_warnings) * 0.1
+        scores["security"] = max(0.5, 1.0 - warning_penalty)
 
     # Trigger quality: how well the frontmatter description enables
     # accurate skill routing (inspired by alirezarezvani/claude-skills
@@ -645,10 +656,21 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             trig_checks.append(any(w in desc_lower for w in ["not for", "don't use", "instead use", "不适用", "不用于"]))
             # 5. Description mentions related/similar skills for disambiguation
             trig_checks.append(any(w in desc_lower for w in ["related", "see also", "关联", "参见", "用 ", "(用"]))
+            # 6. Has "When NOT to Use" with real content (not placeholder)
+            content_lower = content.lower()
+            has_not_use = "when not to use" in content_lower or "not to use" in content_lower or "不适用" in content_lower
+            not_placeholder = "[define" not in content_lower
+            trig_checks.append(has_not_use and not_placeholder)
+            # 7. Negative trigger boundary: description explicitly names skills
+            #    that should handle related-but-different tasks (prevents route collision)
+            trig_checks.append(any(w in desc_lower for w in [
+                "用 improvement-", "use improvement-", "用 benchmark", "用 skill-",
+                "use benchmark", "use skill-", "用 autoloop", "use autoloop",
+            ]))
         else:
-            trig_checks = [False] * 5
+            trig_checks = [False] * 7
     else:
-        trig_checks = [False] * 5
+        trig_checks = [False] * 7
 
     scores["trigger_quality"] = sum(trig_checks) / len(trig_checks) if trig_checks else 0.0
 

@@ -35,14 +35,18 @@ class TaskResult:
     cost_usd: float = 0.0
     duration_ms: int = 0
     error: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 class TaskRunner:
     """Runs a single task with SKILL.md context."""
 
-    def __init__(self, mock: bool = False, timeout: int = 300):
+    def __init__(self, mock: bool = False, timeout: int = 300, model: str | None = None):
         self.mock = mock
         self.timeout = timeout
+        self.model = model  # e.g. "claude-sonnet-4-6", "claude-haiku-4-5"
+        self._last_token_usage: dict[str, int] = {}
 
     def run(self, skill_content: str, task: dict, pass_k: int = 1) -> TaskResult:
         """Run a task pass_k times and return the best result.
@@ -82,11 +86,15 @@ class TaskRunner:
             judge = get_judge(task["judge"], mock=self.mock)
             judge_output = judge.evaluate(raw_output, task)
 
+            # Extract token usage from last execution
+            token_usage = getattr(self, "_last_token_usage", {})
             result = TaskResult(
                 passed=judge_output.get("passed", False),
                 judge_output=judge_output,
                 raw_output=raw_output[:2000],  # truncate for storage
                 duration_ms=duration_ms,
+                input_tokens=token_usage.get("input_tokens", 0),
+                output_tokens=token_usage.get("output_tokens", 0),
             )
 
             if result.passed:
@@ -112,8 +120,11 @@ class TaskRunner:
             prompt_file = Path(tmpdir) / "prompt.txt"
             prompt_file.write_text(prompt, encoding="utf-8")
 
+            cmd = ["claude", "-p", "--output-format", "json"]
+            if self.model:
+                cmd.extend(["--model", self.model])
             result = subprocess.run(
-                ["claude", "-p", "--output-format", "json"],
+                cmd,
                 input=prompt,
                 capture_output=True,
                 text=True,
@@ -123,9 +134,16 @@ class TaskRunner:
             if result.returncode != 0:
                 raise RuntimeError(f"claude -p exited {result.returncode}: {result.stderr[:300]}")
 
-            # Parse claude JSON output
+            # Parse claude JSON output, extract token usage if available
             try:
                 parsed = json.loads(result.stdout)
+                # Store token usage for cost tracking
+                usage = parsed.get("usage", {})
+                if usage:
+                    self._last_token_usage = {
+                        "input_tokens": usage.get("input_tokens", 0),
+                        "output_tokens": usage.get("output_tokens", 0),
+                    }
                 return parsed.get("result", result.stdout)
             except (json.JSONDecodeError, TypeError):
                 return result.stdout

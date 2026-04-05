@@ -222,7 +222,7 @@ class TestEvaluateSkillDimensions:
             encoding="utf-8",
         )
         scores = evaluate_skill_dimensions(skill)
-        assert scores["trigger_quality"] >= 0.6  # has description, triggers, disambiguation
+        assert scores["trigger_quality"] >= 0.5  # 4/7 checks pass (desc, action verbs, triggers, disambiguation)
 
     def test_trigger_quality_without_frontmatter(self, tmp_path):
         """Skill without frontmatter gets 0.0 trigger quality."""

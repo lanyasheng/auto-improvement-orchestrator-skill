@@ -267,9 +267,27 @@ def _parse_orchestrator_output(stdout: str, target: str) -> dict[str, Any]:
     return result
 
 
-def _estimate_cost(duration_seconds: float) -> float:
-    """Rough cost estimate based on duration. Placeholder heuristic."""
-    # ~$0.10 per minute of LLM time as rough estimate
+def _estimate_cost(duration_seconds: float, result: dict[str, Any] | None = None) -> float:
+    """Estimate cost from token usage if available, else duration heuristic.
+
+    If the orchestrator output includes token counts (from evaluator),
+    use actual token-based pricing. Otherwise fall back to $0.10/min.
+    """
+    if result:
+        # Try to read token usage from pipeline summary
+        summary_path = result.get("final_artifact_path")
+        if summary_path:
+            try:
+                data = read_json(Path(summary_path))
+                input_tokens = data.get("total_input_tokens", 0)
+                output_tokens = data.get("total_output_tokens", 0)
+                if input_tokens > 0 or output_tokens > 0:
+                    # Claude pricing approximation: $3/M input, $15/M output
+                    cost = (input_tokens * 3.0 + output_tokens * 15.0) / 1_000_000
+                    return round(cost, 4)
+            except (OSError, KeyError, TypeError):
+                pass
+    # Fallback: duration-based heuristic
     return round(duration_seconds / 60.0 * 0.10, 4)
 
 
