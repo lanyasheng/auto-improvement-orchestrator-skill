@@ -300,33 +300,6 @@ class ThreeLayerMemory:
     def _save(self, path: Path, data: list[dict]) -> None:
         write_json(path, data)
 
-    def flush_to_disk(self, session_state_dir: Path | None = None) -> Path:
-        """Flush all in-memory patterns to disk for compaction survival.
-
-        Writes a consolidated snapshot to either a session state directory
-        (if provided) or the memory_dir itself. This ensures patterns survive
-        context compression — the file lives on disk, not in the context window.
-        """
-        target_dir = session_state_dir or self.memory_dir
-        target_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_path = target_dir / "memory-snapshot.json"
-
-        hot = self._load(self.hot_path)
-        warm = self._load(self.warm_path)
-
-        snapshot = {
-            "timestamp": utc_now_iso(),
-            "hot_count": len(hot),
-            "warm_count": len(warm),
-            "top_patterns": sorted(hot, key=lambda x: -x.get("hit_count", 0))[:20],
-            "failed_strategies": [
-                e for e in hot
-                if not e.get("succeeded") and e.get("hit_count", 0) >= 3
-            ],
-        }
-        write_json(snapshot_path, snapshot)
-        return snapshot_path
-
 
 # ---------------------------------------------------------------------------
 # Frontmatter parsing helpers
@@ -397,55 +370,6 @@ def _extract_description_text(fm_section: str) -> str:
 # Skill evaluation — real, not random
 # ---------------------------------------------------------------------------
 
-def _check_harness_patterns(skill_path: Path, skill_md_content: str, has_scripts: bool) -> float:
-    """Check adoption of execution-harness patterns relevant to this skill's category.
-
-    Uses CATEGORY_HARNESS_CHECKS to determine which patterns are expected.
-    Knowledge/rule type skills have no harness requirements (return 1.0).
-    Tool/orchestration/learning type skills are checked against their specific list.
-    """
-    from lib.common import detect_skill_category, CATEGORY_HARNESS_CHECKS
-
-    category = detect_skill_category(skill_path)
-    expected_checks = CATEGORY_HARNESS_CHECKS.get(category, [])
-
-    if not expected_checks or not has_scripts:
-        return 1.0  # no harness required for this category
-
-    all_py = ""
-    for f in skill_path.rglob("*.py"):
-        if "__pycache__" in str(f) or "test_" in f.name:
-            continue
-        try:
-            all_py += f.read_text(encoding="utf-8", errors="ignore") + "\n"
-        except Exception:
-            pass
-
-    if not all_py:
-        return 0.5
-
-    skill_lower = skill_md_content.lower()
-    results: list[bool] = []
-
-    # Check only the patterns expected for this skill category
-    check_map = {
-        "atomic_write": lambda: "write_json" in all_py or "write_text" in all_py,
-        "timeout_handling": lambda: "TimeoutExpired" in all_py or "timeout=" in all_py,
-        "backup_rollback": lambda: any(w in all_py.lower() for w in ("backup", "rollback", "revert")),
-        "state_persistence": lambda: "state" in all_py.lower() and ("json" in all_py.lower() or "write_" in all_py),
-        "error_escalation": lambda: "error" in skill_lower or "fail" in skill_lower or "retry" in skill_lower,
-        "handoff_docs": lambda: "handoff" in all_py.lower() or "handoff" in skill_lower,
-        "memory_flush": lambda: "flush" in all_py.lower() or "snapshot" in all_py.lower(),
-    }
-
-    for check_name in expected_checks:
-        checker = check_map.get(check_name)
-        if checker:
-            results.append(checker())
-
-    return sum(results) / len(results) if results else 1.0
-
-
 def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     """Evaluate a skill across multiple dimensions.
 
@@ -482,7 +406,7 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     else:
         content = skill_md_content
         lines = len(content.split("\n"))
-        base = 0.6  # SKILL.md exists = 60%
+        base = 0.4  # SKILL.md exists = 40% base
         bonus = 0.0
         bonus_items = 0
         # Optional structure bonuses
@@ -493,6 +417,10 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         if has_tests:
             bonus += 0.1; bonus_items += 1
         if has_readme:
+            bonus += 0.1; bonus_items += 1
+        if "<example>" in content or "<anti-example>" in content:
+            bonus += 0.1; bonus_items += 1
+        if "## Output" in content or "## output" in content.lower():
             bonus += 0.1; bonus_items += 1
         scores["coverage"] = min(1.0, base + bonus)
         # Penalty: SKILL.md > 500 lines without references/ (progressive disclosure)
@@ -534,23 +462,23 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 
         # ===== TIER 2: LLM-as-judge (semantic quality) =====
         if not gate_pass:
-            scores["accuracy"] = 0.3
+            # Scale 0.0-0.3 based on how many gate checks passed
+            passed_count = sum(1 for c in gate_checks if c)
+            scores["accuracy"] = 0.3 * (passed_count / len(gate_checks))
         else:
             llm_score = _llm_judge_accuracy(content, mock=_USE_MOCK_LLM)
-            # Gate passed (0.4 floor) + LLM score drives remaining 0.6
-            scores["accuracy"] = 0.4 + 0.6 * llm_score
+            scores["accuracy"] = 0.3 + 0.7 * llm_score
 
         lines = len(content.split("\n"))
         if lines > 0:
-            scores["efficiency"] = min(1.0, max(0.3, 1.0 - (lines - 200) / 1000))
+            scores["efficiency"] = min(1.0, max(0.3, 1.0 - (lines - 300) / 1000))
         else:
             scores["efficiency"] = 0.3
     else:
         scores["accuracy"] = 0.0
         scores["efficiency"] = 0.0
 
-    # Reliability: test results + harness pattern adoption
-    # Base score from tests (0.0-1.0)
+    # Reliability: test results (pure-text skills without scripts/ default to 1.0)
     if has_tests:
         try:
             result = subprocess.run(
@@ -558,80 +486,48 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
                  str(skill_path / "tests"), "-q", "--tb=no"],
                 capture_output=True, text=True, timeout=30,
             )
-            test_score = 1.0 if result.returncode == 0 else 0.5
+            scores["reliability"] = 1.0 if result.returncode == 0 else 0.5
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            test_score = 0.3
+            scores["reliability"] = 0.3
     elif has_scripts:
-        test_score = 0.3
+        # Has scripts but no tests → should have tests
+        scores["reliability"] = 0.3
     else:
-        test_score = 1.0
+        # Pure-text skill (no scripts, no tests) → perfectly valid
+        scores["reliability"] = 1.0
 
-    # Harness pattern checks (only for skills with scripts — orchestration/tool type)
-    harness_score = _check_harness_patterns(skill_path, skill_md_content, has_scripts)
-
-    # Harness patterns are a bonus on top of test score, not a penalty
-    # A skill with passing tests but no harness patterns gets full test_score
-    # A skill with both gets up to 10% bonus (capped at 1.0)
-    if has_scripts and harness_score > 0:
-        scores["reliability"] = min(1.0, test_score + harness_score * 0.1)
-    else:
-        scores["reliability"] = test_score
-
-    # Security: gate-first design (inspired by skill-tester's "security is a door, not a score").
-    # Critical issues (hardcoded secrets, dangerous exec patterns) → all scores zeroed.
-    # Warnings (missing license, etc.) → reduce security score but don't block.
-    import re
-
-    security_issues: list[str] = []  # critical: blocks everything
-    security_warnings: list[str] = []  # advisory: reduces score
-
+    # Security: check SKILL.md only (not implementation code which legitimately
+    # uses "password" parameters, "secrets" module, etc.)
+    sec_checks = []
     if has_skill_md:
         skill_content = skill_md_content
         skill_lower = skill_content.lower()
-        # CRITICAL: real hardcoded secrets
-        if "api_key =" in skill_lower or "api_key=" in skill_lower:
-            security_issues.append("Hardcoded api_key assignment in SKILL.md")
-        if "password =" in skill_lower or "password=" in skill_lower:
-            security_issues.append("Hardcoded password assignment in SKILL.md")
-        if re.search(r"sk-[A-Za-z0-9]{20,}", skill_content):
-            security_issues.append("Real API key pattern (sk-...) in SKILL.md")
-        # WARNING: missing license
+        # SKILL.md should not contain actual secrets
+        sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
+        sec_checks.append("password =" not in skill_lower and "password=" not in skill_lower)
+        sec_checks.append("sk-" not in skill_content)  # API key pattern
+        # Has license in frontmatter?
         if skill_content.count("---") >= 2:
             fm = skill_content.split("---", 2)[1]
-            if "license:" not in fm:
-                security_warnings.append("Missing license in frontmatter")
+            sec_checks.append("license:" in fm)
+        else:
+            sec_checks.append(False)
+    else:
+        sec_checks = [False, False, False, False]
 
-    # Implementation code checks (only scripts, not test files)
+    # Implementation code checks (only flag dangerous patterns, not parameter names)
     all_py_content = ""
     for f in skill_path.rglob("*.py"):
-        if "__pycache__" in str(f) or "test_" in f.name:
+        if "__pycache__" in str(f):
             continue
         try:
             all_py_content += f.read_text(encoding="utf-8", errors="ignore") + "\n"
         except Exception:
             pass
+    sec_checks.append("os.system(" not in all_py_content)
+    sec_checks.append("exec(" not in all_py_content or "exec_module" in all_py_content)
 
-    # CRITICAL: dangerous patterns in real code (not docs/comments)
-    for line in all_py_content.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith(("#", '"', "'", "|")):
-            continue
-        if "os.system(" in stripped:
-            security_issues.append(f"os.system() usage: {stripped[:80]}")
-        if "exec(" in stripped and "exec_module" not in stripped:
-            security_issues.append(f"exec() usage: {stripped[:80]}")
-
-    # Gate: critical issues → zero ALL scores (security is a door, not a score)
-    if security_issues:
-        for dim in scores:
-            scores[dim] = 0.0
-        scores["security"] = 0.0
-        # Store issues for reporting
-        scores["_security_issues"] = security_issues  # type: ignore[assignment]
-    else:
-        # No critical issues → score based on warnings
-        warning_penalty = len(security_warnings) * 0.1
-        scores["security"] = max(0.5, 1.0 - warning_penalty)
+    scores["security"] = sum(sec_checks) / len(sec_checks) if sec_checks else 0.5
 
     # Trigger quality: how well the frontmatter description enables
     # accurate skill routing (inspired by alirezarezvani/claude-skills
@@ -650,29 +546,107 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
                             "when", "generate", "check", "fix", "analyze", "optimize", "create", "run", "use"]
             trig_checks.append(any(v in desc_text.lower() for v in action_verbs))
             # 3. Has 'triggers:' field with explicit trigger list
-            trig_checks.append("triggers:" in fm)
+            has_triggers = bool(re.search(r'triggers:\s*\n\s+- .+', fm))
+            trig_checks.append(has_triggers)
             # 4. Has disambiguation (mentions what NOT to use for)
             desc_lower = desc_text.lower()
             trig_checks.append(any(w in desc_lower for w in ["not for", "don't use", "instead use", "不适用", "不用于"]))
             # 5. Description mentions related/similar skills for disambiguation
             trig_checks.append(any(w in desc_lower for w in ["related", "see also", "关联", "参见", "用 ", "(用"]))
-            # 6. Has "When NOT to Use" with real content (not placeholder)
-            content_lower = content.lower()
-            has_not_use = "when not to use" in content_lower or "not to use" in content_lower or "不适用" in content_lower
-            not_placeholder = "[define" not in content_lower
-            trig_checks.append(has_not_use and not_placeholder)
-            # 7. Negative trigger boundary: description explicitly names skills
-            #    that should handle related-but-different tasks (prevents route collision)
-            trig_checks.append(any(w in desc_lower for w in [
-                "用 improvement-", "use improvement-", "用 benchmark", "用 skill-",
-                "use benchmark", "use skill-", "用 autoloop", "use autoloop",
-            ]))
         else:
-            trig_checks = [False] * 7
+            trig_checks = [False] * 5
     else:
-        trig_checks = [False] * 7
+        trig_checks = [False] * 5
 
     scores["trigger_quality"] = sum(trig_checks) / len(trig_checks) if trig_checks else 0.0
+
+    # Leakage: detect internal project references that shouldn't be in a
+    # generic/open-source skill. Hardcoded paths, org-specific tool names,
+    # internal notification systems, project-specific prefixes.
+    leak_checks: list[bool] = []
+    if has_skill_md:
+        content = skill_md_content
+        content_lower = content.lower()
+        # 1. No hardcoded home-directory paths (~/work/..., /Users/..., /home/...)
+        leak_checks.append(not bool(re.search(
+            r'~/work/|/Users/\w+/|/home/\w+/', content)))
+        # 2. No internal notification systems (DingTalk, Feishu, Lark, internal Slack channels)
+        leak_checks.append(not any(w in content_lower for w in [
+            "dingtalk", "feishu", "lark", "钉钉", "飞书"]))
+        # 3. No project-specific session prefixes (nc-, omc-, omx-)
+        leak_checks.append(not bool(re.search(r'\bnc-\w+\b', content)))
+        # 4. No internal tool references without explaining them generically
+        #    (dispatch.sh, session-monitor.sh, orchestrator-planner as proper nouns)
+        internal_tools = re.findall(
+            r'\b(?:dispatch\.sh|session-monitor\.sh|on-stop\.sh|on-session-end\.sh|'
+            r'progress\.sh|status\.sh|send\.sh|notify-callback\.sh)\b', content)
+        # Allow if these are in a generic "integration example" context,
+        # but flag if they appear as hardcoded references
+        leak_checks.append(len(internal_tools) <= 1)  # 0-1 mention OK, 2+ = leaky
+        # 5. No ~/.openclaw/ or ~/.omc/ hardcoded paths
+        leak_checks.append(not bool(re.search(
+            r'~/\.openclaw/|~/\.omc/', content)))
+    else:
+        leak_checks = [False] * 5
+
+    scores["leakage"] = sum(leak_checks) / len(leak_checks) if leak_checks else 0.5
+
+    # Knowledge density: does each knowledge unit contain sufficient depth?
+    #
+    # Two strategies depending on structure:
+    # - If references/ exists (progressive disclosure): check per-FILE depth
+    #   in references/. Each .md file is one knowledge unit.
+    # - If no references/: check per-SECTION depth in SKILL.md.
+    kd_checks: list[bool] = []
+    if has_skill_md:
+        if has_references:
+            # Progressive disclosure mode: each reference file is a knowledge unit
+            ref_files = sorted(skill_path.rglob("references/**/*.md"))
+            all_ref_content = ""
+            for rf in ref_files:
+                try:
+                    rf_content = rf.read_text(encoding="utf-8", errors="ignore")
+                    all_ref_content += "\n" + rf_content
+                    rf_lines = [l for l in rf_content.strip().split("\n") if l.strip()]
+                    # A reference file with < 20 non-empty lines is too thin
+                    kd_checks.append(len(rf_lines) >= 20)
+                except Exception:
+                    kd_checks.append(False)
+            # Overall checks on combined content
+            all_content = skill_md_content + all_ref_content
+            code_blocks = re.findall(r'```[\s\S]*?```', all_content)
+            kd_checks.append(len(code_blocks) >= 3)
+            has_why = bool(re.search(
+                r'(\*\*问题\*\*|\*\*原理\*\*|\*\*Why\*\*|[Tt]radeoff|[Bb]ecause|之所以|原因[是：])',
+                all_content))
+            kd_checks.append(has_why)
+        else:
+            # Flat mode: check per-section depth in SKILL.md
+            content = skill_md_content
+            stripped = re.sub(r'```[\s\S]*?```', '', content)
+            sections = re.split(r'^## ', stripped, flags=re.MULTILINE)
+            skip_prefixes = ("与现有", "工作流", "Output", "不做", "When to", "When NOT",
+                             "Session", "条件", "Related", "Quick", "CLI", "Decided",
+                             "Rejected", "Risks", "Files", "Remaining", "Scripts",
+                             "常见场景", "目录结构", "为什么")
+            pattern_sections = [s for s in sections[1:]
+                                if not s.split("\n")[0].strip().startswith(skip_prefixes)]
+            if pattern_sections:
+                for sect in pattern_sections:
+                    lines = [l for l in sect.strip().split("\n") if l.strip()]
+                    kd_checks.append(len(lines) >= 8)
+                code_blocks = re.findall(r'```[\s\S]*?```', content)
+                kd_checks.append(len(code_blocks) >= 3)
+                has_why = bool(re.search(
+                    r'(\*\*问题\*\*|\*\*原理\*\*|\*\*Why\*\*|[Tt]radeoff|[Bb]ecause|之所以|原因[是：])',
+                    content))
+                kd_checks.append(has_why)
+            else:
+                kd_checks = [False] * 3
+    else:
+        kd_checks = [False] * 3
+
+    scores["knowledge_density"] = sum(kd_checks) / len(kd_checks) if kd_checks else 0.0
 
     return scores
 
@@ -685,23 +659,27 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 ROLE_WEIGHTS: dict[str, dict[str, float]] = {
     "user": {
         # User cares: can I find this skill? can I use it quickly?
-        "accuracy": 0.20, "coverage": 0.10, "reliability": 0.10,
-        "efficiency": 0.15, "security": 0.05, "trigger_quality": 0.40,
+        "accuracy": 0.15, "coverage": 0.10, "reliability": 0.10,
+        "efficiency": 0.10, "security": 0.05, "trigger_quality": 0.35,
+        "leakage": 0.05, "knowledge_density": 0.10,
     },
     "developer": {
         # Developer cares: is the code solid? are there tests?
-        "accuracy": 0.15, "coverage": 0.20, "reliability": 0.30,
-        "efficiency": 0.15, "security": 0.10, "trigger_quality": 0.10,
+        "accuracy": 0.10, "coverage": 0.15, "reliability": 0.25,
+        "efficiency": 0.10, "security": 0.10, "trigger_quality": 0.05,
+        "leakage": 0.10, "knowledge_density": 0.15,
     },
     "security_auditor": {
         # Security auditor cares: secrets? dangerous patterns? license?
-        "accuracy": 0.10, "coverage": 0.10, "reliability": 0.15,
-        "efficiency": 0.05, "security": 0.50, "trigger_quality": 0.10,
+        "accuracy": 0.10, "coverage": 0.05, "reliability": 0.10,
+        "efficiency": 0.05, "security": 0.40, "trigger_quality": 0.05,
+        "leakage": 0.20, "knowledge_density": 0.05,
     },
     "architect": {
-        # Architect cares: structure? progressive disclosure? atomicity?
-        "accuracy": 0.30, "coverage": 0.25, "reliability": 0.10,
-        "efficiency": 0.25, "security": 0.05, "trigger_quality": 0.05,
+        # Architect cares: structure? progressive disclosure? depth?
+        "accuracy": 0.20, "coverage": 0.15, "reliability": 0.05,
+        "efficiency": 0.15, "security": 0.05, "trigger_quality": 0.05,
+        "leakage": 0.10, "knowledge_density": 0.25,
     },
 }
 
@@ -787,6 +765,14 @@ _IMPROVEMENT_STRATEGIES: dict[str, dict[str, Any]] = {
     "security": {
         "type": "security",
         "description": "Remove hardcoded secrets from SKILL.md",
+    },
+    "leakage": {
+        "type": "leakage",
+        "description": "Remove internal project references (hardcoded paths, org-specific tools, internal prefixes)",
+    },
+    "knowledge_density": {
+        "type": "knowledge_density",
+        "description": "Add depth to thin pattern sections (why, how, tradeoffs, concrete examples)",
     },
 }
 
@@ -1015,7 +1001,6 @@ def _apply_security_improvement(skill_path: Path) -> bool:
     if "password" not in lowered and "api_key" not in lowered:
         return False
 
-    import re
     redacted = re.sub(
         r'(password|api_key)\s*[:=]\s*\S+',
         r'\1 = <REDACTED>',
@@ -1275,9 +1260,6 @@ def self_improve_loop(
             reason="kept" if kept else "reverted",
         ))
 
-        # Flush memory to disk after each iteration for compaction survival
-        memory.flush_to_disk()
-
     return generate_improvement_report(results, best_scores, memory)
 
 
@@ -1309,6 +1291,15 @@ def main():
         memory_dir=Path(args.memory_dir) if args.memory_dir else None,
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
+
+    # Write scores to state directory so autoloop can detect convergence
+    if args.state_root:
+        learner_dir = Path(args.state_root) / "learner"
+        learner_dir.mkdir(parents=True, exist_ok=True)
+        import time
+        score_path = learner_dir / f"scores-{int(time.time())}.json"
+        with score_path.open("w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

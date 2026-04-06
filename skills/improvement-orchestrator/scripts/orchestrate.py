@@ -9,14 +9,16 @@ and feed it back into the next proposal round.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+REPO_ROOT = _REPO_ROOT
 
 from lib.common import read_json, utc_now_iso, write_json
 
@@ -54,6 +56,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Max retry attempts on revert (default: 3)",
     )
     parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Run full pipeline without pausing",
+    )
+    parser.add_argument(
         "--task-suite",
         help="Path to task_suite.yaml for evaluator (enables real LLM evaluation)",
     )
@@ -70,15 +77,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 
-def _run_script(cmd: list[str], label: str, timeout: int = 1200) -> str:
+def _run_script(cmd: list[str], label: str) -> str:
     """Run a subprocess and return its stdout (stripped).
 
-    Raises RuntimeError on non-zero exit or timeout.
+    Raises RuntimeError on non-zero exit.
     """
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"{label} timed out after {timeout}s")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
     if result.returncode != 0:
         raise RuntimeError(
             f"{label} failed (exit {result.returncode}):\n"
@@ -92,6 +96,7 @@ def run_proposer(
     target: str,
     sources: list[str],
     state_root: str,
+    trace: str | None = None,
 ) -> dict[str, Any]:
     """Call propose.py and return the candidate artifact."""
     cmd = [
@@ -104,6 +109,8 @@ def run_proposer(
     ]
     for s in sources:
         cmd.extend(["--source", str(s)])
+    if trace:
+        cmd.extend(["--trace", str(trace)])
     artifact_path = _run_script(cmd, "proposer")
     return read_json(Path(artifact_path))
 
@@ -178,11 +185,12 @@ def run_evaluator(
     try:
         artifact_path = _run_script(cmd, "evaluator")
         result = read_json(Path(artifact_path))
-        verdict = result.get("verdict", "skipped")
+        evaluation = result.get("evaluation", {})
+        verdict = evaluation.get("verdict", result.get("verdict", "skipped"))
         if verdict == "skipped":
             print("  Evaluator: skipped (no task suite)")
             return None
-        print(f"  Evaluator: {verdict} (pass_rate={result.get('evaluation_results', {}).get('execution_pass_rate', 'N/A')})")
+        print(f"  Evaluator: {verdict} (pass_rate={evaluation.get('execution_pass_rate', 'N/A')})")
         return result
     except RuntimeError as exc:
         print(f"  Evaluator: error ({exc}), continuing without evaluation")
@@ -193,7 +201,6 @@ def run_gate(
     ranking_artifact_path: str,
     execution_artifact_path: str,
     state_root: str,
-    evaluation_artifact_path: str | None = None,
 ) -> dict[str, Any]:
     """Call gate.py and return the gate receipt."""
     cmd = [
@@ -206,8 +213,6 @@ def run_gate(
         "--state-root",
         str(state_root),
     ]
-    if evaluation_artifact_path:
-        cmd.extend(["--evaluation", str(evaluation_artifact_path)])
     artifact_path = _run_script(cmd, "gate")
     return read_json(Path(artifact_path))
 
@@ -239,9 +244,9 @@ def extract_failure_trace(
     execution_artifact: dict[str, Any],
     state_root: str,
 ) -> str:
-    """Extract structured failure trace and write it to a temp file.
+    """Extract structured failure trace and write it to a file.
 
-    The returned path can be passed as --source to the next proposer round,
+    The returned path can be passed as --trace to the next proposer round,
     enabling the Ralph Wiggum retry pattern: failures feed forward as
     context for the next attempt.
     """
@@ -345,6 +350,7 @@ def run_pipeline(
     """
     # Mutable copy so we can append failure traces across retries
     active_sources = list(sources)
+    active_trace: str | None = None
     final_decision = "no_candidates"
     final_candidate_id: str | None = None
     final_artifact_path: str | None = None
@@ -362,7 +368,7 @@ def run_pipeline(
     for attempt in range(1, max_retries + 1):
         attempts_used = attempt
         # 1. PROPOSE
-        candidate_artifact = run_proposer(target, active_sources, state_root)
+        candidate_artifact = run_proposer(target, active_sources, state_root, trace=active_trace)
         candidate_artifact_path = candidate_artifact.get("truth_anchor", "")
 
         # 2. DISCRIMINATE (score + rank)
@@ -372,47 +378,51 @@ def run_pipeline(
         # 3. Find best accepted candidate
         best = find_best_accepted(ranking_artifact)
         if not best:
-            final_decision = "no_accepted_candidates"
-            print(f"  No accepted candidates in attempt {attempt}/{max_retries}")
-            break
+            if attempt >= max_retries:
+                final_decision = "no_accepted_candidates"
+                print(f"  No accepted candidates after {attempt} attempts")
+                break
+            # Inject rejection trace for next round
+            trace_dir = Path(state_root) / "traces"
+            trace_dir.mkdir(parents=True, exist_ok=True)
+            rejection_trace = {
+                "type": "all_rejected_trace",
+                "scored_candidates": [
+                    {"id": c.get("id"), "score": c.get("score"), "recommendation": c.get("recommendation")}
+                    for c in ranking_artifact.get("scored_candidates", [])
+                ],
+                "timestamp": utc_now_iso(),
+            }
+            trace_path = trace_dir / f"rejection-trace-attempt-{attempt}.json"
+            write_json(trace_path, rejection_trace)
+            active_trace = str(trace_path)
+            print(f"  No accepted candidates, retrying ({attempt}/{max_retries})")
+            continue
 
         candidate_id = best["id"]
 
-        # 3.5 EVALUATE (optional — skipped for low-risk docs or if no task-suite)
-        # Adaptive complexity: low-risk document changes skip expensive evaluation
-        skip_eval = (
-            best.get("risk_level") == "low"
-            and best.get("category") in ("docs", "reference", "guardrail")
-        )
-        if skip_eval:
-            print(f"  Evaluator: skipped (low-risk {best.get('category')} candidate)")
-        # Category-aware eval threshold
-        from lib.common import CATEGORY_EVAL_THRESHOLDS
-        cat_threshold = CATEGORY_EVAL_THRESHOLDS.get(best.get("category", ""), 6.0)
-        eval_result = None if skip_eval else run_evaluator(
+        # 3.5 EVALUATE (optional — skipped if no --task-suite provided)
+        eval_result = run_evaluator(
             ranking_artifact_path,
             candidate_id,
             state_root,
             task_suite=task_suite,
-            eval_threshold=cat_threshold,
             mock=eval_mock,
         )
-        eval_artifact_path: str | None = None
-        if eval_result:
-            eval_artifact_path = eval_result.get("truth_anchor")
-        if eval_result and eval_result.get("verdict") == "fail":
+        eval_verdict = eval_result.get("evaluation", {}).get("verdict") if eval_result else None
+        if eval_verdict == "fail":
             # Evaluation failed — treat as revert and retry
             trace = {
                 "type": "evaluation_failure_trace",
                 "candidate_id": candidate_id,
-                "evaluation_results": eval_result.get("evaluation_results", {}),
+                "evaluation_results": eval_result.get("evaluation", {}),
                 "timestamp": utc_now_iso(),
             }
             trace_dir = Path(state_root) / "traces"
             trace_dir.mkdir(parents=True, exist_ok=True)
             trace_path = trace_dir / f"eval-trace-{candidate_id}.json"
             write_json(trace_path, trace)
-            active_sources.append(str(trace_path))
+            active_trace = str(trace_path)
             print(f"  Evaluation failed, retrying ({attempt}/{max_retries})")
             continue
 
@@ -424,12 +434,11 @@ def run_pipeline(
         )
         execution_artifact_path = execution_artifact.get("truth_anchor", "")
 
-        # 5. GATE (verify after execution, forwarding evaluator data)
+        # 5. GATE (verify after execution)
         receipt = run_gate(
             ranking_artifact_path,
             execution_artifact_path,
             state_root,
-            evaluation_artifact_path=eval_artifact_path,
         )
 
         # 6. DECIDE
@@ -446,7 +455,7 @@ def run_pipeline(
             trace_path = extract_failure_trace(
                 receipt, execution_artifact, state_root,
             )
-            active_sources.append(trace_path)
+            active_trace = trace_path
             print(
                 f"  Reverted, retrying ({attempt}/{max_retries})"
             )
@@ -510,10 +519,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print_summary(summary)
-    # Write machine-readable output for downstream consumers
-    summary_path = Path(state_root) / "pipeline-summary.json"
-    write_json(summary_path, summary)
-    print(str(summary_path))
     return 0
 
 

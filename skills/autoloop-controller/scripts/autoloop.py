@@ -11,6 +11,7 @@ Termination conditions (OR logic):
   2. cost_cap exceeded
   3. score plateau detected
   4. oscillation detected
+  5. consecutive errors exceeded (circuit breaker)
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.common import read_json, utc_now_iso, write_json, write_text
+from lib.common import read_json, utc_now_iso, write_json
 
 # Sibling modules
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -42,7 +43,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from convergence import compute_weighted_score, detect_oscillation, detect_plateau
-from cost_tracker import CostRecord, CostTracker
+# cost_tracker available for future use
 
 # ---------------------------------------------------------------------------
 # Orchestrator path
@@ -74,6 +75,8 @@ class AutoloopState:
     plateau_window: int = 3
     status: str = "running"
     last_failure_trace: str | None = None
+    consecutive_errors: int = 0
+    max_consecutive_errors: int = 3
     cooldown_minutes: int = 30
     next_run_at: str | None = None
 
@@ -111,6 +114,9 @@ def should_stop(state: AutoloopState) -> tuple[bool, str]:
 
     if detect_oscillation(state.score_history, window=4):
         return True, "oscillation detected (keep-reject alternating pattern)"
+
+    if state.consecutive_errors >= state.max_consecutive_errors:
+        return True, f"consecutive_errors exceeded ({state.consecutive_errors}/{state.max_consecutive_errors})"
 
     return False, ""
 
@@ -157,13 +163,29 @@ def run_single_iteration(
             "--state-root", str(state_root),
             "--auto",
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        except subprocess.TimeoutExpired:
+            state.last_failure_trace = "Orchestrator subprocess timed out after 3600s"
+            state.status = "error"
+            state.consecutive_errors += 1
+            result = {
+                "target": target,
+                "attempts": 0,
+                "max_retries": 0,
+                "final_decision": "error",
+                "final_candidate_id": None,
+                "final_artifact_path": None,
+                "error": state.last_failure_trace,
+            }
+            return state, result
 
         duration = time.monotonic() - iter_start
 
         if proc.returncode != 0:
             state.last_failure_trace = proc.stderr.strip() or proc.stdout.strip()
             state.status = "error"
+            state.consecutive_errors += 1
             result = {
                 "target": target,
                 "attempts": 0,
@@ -212,6 +234,7 @@ def run_single_iteration(
     state.total_cost_usd += cost_val
     state.iterations_completed = iteration
     state.last_failure_trace = None
+    state.consecutive_errors = 0
 
     # Append to iteration log
     log_entry = {
@@ -226,13 +249,6 @@ def run_single_iteration(
         "artifact_path": result.get("final_artifact_path"),
     }
     _append_iteration_log(state_root, log_entry)
-
-    # Write handoff document for cross-iteration context survival
-    prev_scores = {}
-    if len(state.score_history) >= 2:
-        prev_entry = state.score_history[-2]
-        prev_scores = prev_entry.get("scores", {})
-    _write_handoff(state_root, iteration, result, scores, prev_scores)
 
     return state, result
 
@@ -267,27 +283,9 @@ def _parse_orchestrator_output(stdout: str, target: str) -> dict[str, Any]:
     return result
 
 
-def _estimate_cost(duration_seconds: float, result: dict[str, Any] | None = None) -> float:
-    """Estimate cost from token usage if available, else duration heuristic.
-
-    If the orchestrator output includes token counts (from evaluator),
-    use actual token-based pricing. Otherwise fall back to $0.10/min.
-    """
-    if result:
-        # Try to read token usage from pipeline summary
-        summary_path = result.get("final_artifact_path")
-        if summary_path:
-            try:
-                data = read_json(Path(summary_path))
-                input_tokens = data.get("total_input_tokens", 0)
-                output_tokens = data.get("total_output_tokens", 0)
-                if input_tokens > 0 or output_tokens > 0:
-                    # Claude pricing approximation: $3/M input, $15/M output
-                    cost = (input_tokens * 3.0 + output_tokens * 15.0) / 1_000_000
-                    return round(cost, 4)
-            except (OSError, KeyError, TypeError):
-                pass
-    # Fallback: duration-based heuristic
+def _estimate_cost(duration_seconds: float) -> float:
+    """Rough cost estimate based on duration. Placeholder heuristic."""
+    # ~$0.10 per minute of LLM time as rough estimate
     return round(duration_seconds / 60.0 * 0.10, 4)
 
 
@@ -303,8 +301,8 @@ def _load_latest_scores(state_root: str) -> dict[str, float]:
         return {}
     try:
         data = read_json(candidates[0])
-        # Extract dimension scores from learner output
-        dimensions = data.get("dimensions", {})
+        # Extract dimension scores from learner output (final_scores or legacy dimensions)
+        dimensions = data.get("final_scores", data.get("dimensions", {}))
         return {k: v.get("score", 0.0) if isinstance(v, dict) else float(v) for k, v in dimensions.items()}
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
         return {}
@@ -316,67 +314,6 @@ def _append_iteration_log(state_root: str, entry: dict) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def _write_handoff(
-    state_root: str,
-    iteration: int,
-    result: dict[str, Any],
-    scores: dict[str, float],
-    prev_scores: dict[str, float],
-) -> str:
-    """Write a handoff document for cross-iteration context survival.
-
-    Returns the path to the handoff file (usable as --source for next iteration).
-    """
-    handoff_dir = Path(state_root) / "handoffs"
-    handoff_dir.mkdir(parents=True, exist_ok=True)
-    handoff_path = handoff_dir / f"iteration-{iteration}.md"
-
-    decision = result.get("final_decision", "unknown")
-    candidate_id = result.get("final_candidate_id", "N/A")
-
-    lines = [
-        f"# Iteration {iteration} Handoff",
-        "",
-        "## Decided",
-        f"- Decision: {decision}",
-        f"- Candidate: {candidate_id}",
-    ]
-
-    if decision == "keep" and candidate_id:
-        lines.append(f"- Applied candidate {candidate_id} successfully")
-
-    lines.append("")
-    lines.append("## Rejected")
-    attempts = result.get("attempts", 0)
-    if decision in ("reject", "revert"):
-        lines.append(f"- Candidate {candidate_id} was {decision}ed after {attempts} attempt(s)")
-    elif attempts > 1:
-        lines.append(f"- {attempts - 1} candidate(s) reverted before final keep")
-    else:
-        lines.append("- None")
-
-    lines.append("")
-    lines.append("## Scores")
-    for dim in sorted(set(list(scores.keys()) + list(prev_scores.keys()))):
-        cur = scores.get(dim, 0.0)
-        prev = prev_scores.get(dim, 0.0)
-        delta = cur - prev
-        sign = "+" if delta > 0 else ""
-        lines.append(f"- {dim}: {prev:.2f} → {cur:.2f} ({sign}{delta:.2f})")
-
-    lines.append("")
-    lines.append("## Remaining")
-    weak_dims = [d for d, s in scores.items() if s < 0.80]
-    if weak_dims:
-        for d in sorted(weak_dims):
-            lines.append(f"- {d}: {scores[d]:.2f} (below 0.80)")
-    else:
-        lines.append("- All dimensions above 0.80")
-
-    write_text(handoff_path, "\n".join(lines) + "\n")
-    return str(handoff_path)
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +337,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="single-run",
         help="Run mode (default: single-run)",
     )
+    parser.add_argument("--max-consecutive-errors", type=int, default=3, help="Stop after N consecutive errors (default: 3)")
     parser.add_argument("--dry-run", action="store_true", help="Simulate without calling orchestrator")
     return parser.parse_args(argv)
 
@@ -426,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
     state.max_cost_usd = args.max_cost
     state.plateau_window = args.plateau_window
     state.cooldown_minutes = args.cooldown_minutes
+    state.max_consecutive_errors = args.max_consecutive_errors
 
     if not state.started_at:
         state.started_at = utc_now_iso()
@@ -445,6 +384,7 @@ def main(argv: list[str] | None = None) -> int:
                     "cost_cap": "stopped_cost",
                     "plateau": "stopped_plateau",
                     "oscillation": "stopped_oscillation",
+                    "consecutive_errors": "stopped_errors",
                 }
                 for key, status_val in status_map.items():
                     if key in reason:
@@ -483,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
                         "cost_cap": "stopped_cost",
                         "plateau": "stopped_plateau",
                         "oscillation": "stopped_oscillation",
+                    "consecutive_errors": "stopped_errors",
                     }.items():
                         if key in reason:
                             state.status = status_val
@@ -502,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
                         "cost_cap": "stopped_cost",
                         "plateau": "stopped_plateau",
                         "oscillation": "stopped_oscillation",
+                    "consecutive_errors": "stopped_errors",
                     }.items():
                         if key in reason:
                             state.status = status_val

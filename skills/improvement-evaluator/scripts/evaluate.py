@@ -79,7 +79,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", help="Output path for evaluation artifact JSON")
     parser.add_argument("--eval-threshold", type=float, default=6.0, help="Minimum discriminator score to evaluate")
     parser.add_argument("--mock", action="store_true", help="Use mock execution (no claude CLI needed)")
-    parser.add_argument("--model", help="Model to use for claude -p (e.g. claude-sonnet-4-6, claude-haiku-4-5)")
     parser.add_argument("--skill-path", help="Path to SKILL.md or skill directory (standalone mode: prepend to prompts)")
     return parser.parse_args(argv)
 
@@ -323,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.standalone:
         suite = load_task_suite(task_suite_path)
         tasks = suite["tasks"]
-        runner = TaskRunner(mock=args.mock, model=getattr(args, 'model', None))
+        runner = TaskRunner(mock=args.mock)
         run_id = f"standalone-{suite.get('skill_id', 'unknown')}"
 
         # Load skill content if --skill-path provided
@@ -416,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     suite = load_task_suite(task_suite_path)
     tasks = suite["tasks"]
 
-    runner = TaskRunner(mock=args.mock, model=getattr(args, 'model', None))
+    runner = TaskRunner(mock=args.mock)
 
     # --- Run candidate ---
     try:

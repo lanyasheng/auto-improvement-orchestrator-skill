@@ -1,6 +1,5 @@
 ---
 name: improvement-learner
-category: learning
 description: "当需要检查 skill 质量评分、自动优化 SKILL.md 结构、追踪评估分数变化趋势、或「评分低了想知道哪里扣分」时使用。6维结构评估 + HOT/WARM/COLD 三层记忆 + Pareto front。不用于候选语义打分（用 improvement-discriminator）或全流程编排（用 improvement-orchestrator）。"
 license: MIT
 triggers:
@@ -39,6 +38,8 @@ Real Karpathy self-improvement loop: evaluate → modify → re-evaluate → kee
 | **efficiency** | Line count: ≤200=1.0, ≥1200=0.3 | — |
 | **security** | No api_key/password/sk- in SKILL.md, no os.system()/exec() | — |
 | **trigger_quality** | Description length, triggers field, disambiguation | — |
+| **leakage** | No internal project references (company-specific paths, internal URLs) | — |
+| **knowledge_density** | Depth per section, actionable content ratio | — |
 
 ## Three-Layer Memory
 

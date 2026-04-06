@@ -133,8 +133,7 @@ class TestEvaluateSkillDimensions:
         skill = tmp_path / "text-skill"
         skill.mkdir()
         (skill / "SKILL.md").write_text(
-            "---\nname: text-only\nversion: 1.0\n"
-            "description: A pure text skill for providing coding guidance and best practices\n"
+            "---\nname: text-only\nversion: 1.0\ndescription: A pure text skill\n"
             "author: Team\nlicense: MIT\n---\n\n# Text Skill\n\n"
             "## When to Use\n- For guidance\n\n## When NOT to Use\n- Never\n\n"
             "## Usage\n\n```\nJust read SKILL.md\n```\n",
@@ -143,7 +142,7 @@ class TestEvaluateSkillDimensions:
         scores = evaluate_skill_dimensions(skill)
         assert scores["coverage"] == 0.6  # SKILL.md only = base 60%
         assert scores["reliability"] == 1.0  # pure-text → default 1.0
-        assert scores["accuracy"] >= 0.4  # gate passes, LLM judge gives rest
+        assert scores["accuracy"] >= 0.4  # 20 checks now, pure-text passes ~10
 
     def test_full_structure_scores_high(self, tmp_path):
         skill = tmp_path / "good-skill"
@@ -152,11 +151,11 @@ class TestEvaluateSkillDimensions:
             "---\nname: test\n"
             "description: 当需要运行测试评估、检查 skill 质量评分时使用。Use when you want to evaluate quality. 不用于手动打分（用 discriminator）。\n"
             "license: MIT\n---\n\n# Good Skill\n\n"
-            "## When to Use\n- Testing\n\n## When NOT to Use\n- Production. 不要用于生产环境。\n\n"
+            "## When to Use\n- Testing\n\n## When NOT to Use\n- 生产环境评估（用 `improvement-evaluator`）。不要用于生产环境。\n\n"
             "## Pipeline\n\n### Step 1: Evaluate\nMUST run evaluation first. 如果不确定，confirm with user.\n\n"
             "## CLI\n\n```bash\npython3 run.py\n```\n\n"
             "Priority: accuracy 高于 efficiency.\n\n"
-            "<example>\nCorrect: run with --skill-path\n</example>\n\n"
+            "<example>\nInput: SKILL.md path → Output: 6-dimension JSON scores\nreasoning: --skill-path ensures the right skill directory is evaluated\n</example>\n\n"
             "<anti-example>\nWrong: run without path\n</anti-example>\n\n"
             "### 禁止行为\n- ❌ Skip evaluation\n- ❌ Ignore failures\n\n"
             "### 正确做法\n- ✅ Run full pipeline\n- ✅ Check all dims\n\n"
@@ -176,16 +175,9 @@ class TestEvaluateSkillDimensions:
             "def test_pass(): assert True\n", encoding="utf-8"
         )
 
-        # Use mock mode for deterministic accuracy scoring
-        import self_improve
-        old_mock = self_improve._USE_MOCK_LLM
-        self_improve._USE_MOCK_LLM = True
-        try:
-            scores = evaluate_skill_dimensions(skill)
-        finally:
-            self_improve._USE_MOCK_LLM = old_mock
+        scores = evaluate_skill_dimensions(skill)
         assert scores["coverage"] == 1.0  # SKILL.md + all 4 bonuses = 1.0
-        assert scores["accuracy"] >= 0.8  # mock mode: gate passes + regex heuristics
+        assert scores["accuracy"] == 1.0  # all accuracy checks pass
         assert scores["security"] >= 0.8  # no secrets
 
     def test_skill_md_without_frontmatter(self, tmp_path):
@@ -222,7 +214,7 @@ class TestEvaluateSkillDimensions:
             encoding="utf-8",
         )
         scores = evaluate_skill_dimensions(skill)
-        assert scores["trigger_quality"] >= 0.5  # 4/7 checks pass (desc, action verbs, triggers, disambiguation)
+        assert scores["trigger_quality"] >= 0.6  # has description, triggers, disambiguation
 
     def test_trigger_quality_without_frontmatter(self, tmp_path):
         """Skill without frontmatter gets 0.0 trigger quality."""

@@ -8,8 +8,6 @@ Extracted from the original lane_common.py — contains ONLY stateless helpers
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -21,94 +19,25 @@ from typing import Any, Iterable
 SCHEMA_VERSION = "1.0"
 KEEP_CATEGORIES = {"docs", "reference", "guardrail"}
 EXECUTOR_SUPPORTED_CATEGORIES = KEEP_CATEGORIES | {"prompt"}  # superset: includes SKILL.md edits
-PROTECTED_KEYWORDS = (
+_DEFAULT_PROTECTED_KEYWORDS = (
     "trading",
     "gateway",
     "openclaw-company-orchestration-proposal",
 )
 
-# Per-category dimension weights from evaluation-standards.md v2.0.0
-# Keys: accuracy, coverage, reliability, efficiency, security
-CATEGORY_WEIGHTS: dict[str, dict[str, float]] = {
-    "tool": {"accuracy": 0.25, "coverage": 0.15, "reliability": 0.30, "efficiency": 0.15, "security": 0.15},
-    "knowledge": {"accuracy": 0.40, "coverage": 0.20, "reliability": 0.10, "efficiency": 0.20, "security": 0.10},
-    "orchestration": {"accuracy": 0.30, "coverage": 0.20, "reliability": 0.25, "efficiency": 0.10, "security": 0.15},
-    "review": {"accuracy": 0.35, "coverage": 0.15, "reliability": 0.25, "efficiency": 0.10, "security": 0.15},
-    "rule": {"accuracy": 0.35, "coverage": 0.20, "reliability": 0.15, "efficiency": 0.15, "security": 0.15},
-    "learning": {"accuracy": 0.25, "coverage": 0.20, "reliability": 0.30, "efficiency": 0.10, "security": 0.15},
-}
-DEFAULT_WEIGHTS: dict[str, float] = {"accuracy": 0.30, "coverage": 0.20, "reliability": 0.20, "efficiency": 0.15, "security": 0.15}
-
-# Per-category harness expectations
-CATEGORY_HARNESS_CHECKS: dict[str, list[str]] = {
-    "tool": ["atomic_write", "timeout_handling", "error_escalation", "state_persistence", "backup_rollback"],
-    "orchestration": ["atomic_write", "timeout_handling", "handoff_docs", "state_persistence", "backup_rollback"],
-    "learning": ["atomic_write", "state_persistence", "memory_flush", "backup_rollback"],
-    "review": ["timeout_handling", "error_escalation"],
-    "knowledge": [],  # pure text, no harness needed
-    "rule": [],
-}
-
-# Per-category eval thresholds (discriminator score to trigger evaluator)
-CATEGORY_EVAL_THRESHOLDS: dict[str, float] = {
-    "tool": 6.0,
-    "knowledge": 5.0,
-    "orchestration": 6.5,
-    "review": 6.0,
-    "rule": 5.5,
-    "learning": 6.0,
-}
-
-# Per-dimension Pareto regression tolerance
-DIMENSION_REGRESSION_TOLERANCE: dict[str, float] = {
-    "accuracy": 0.05,
-    "coverage": 0.05,
-    "reliability": 0.05,
-    "efficiency": 0.10,  # more lenient — efficiency often trades off with coverage
-    "security": 0.02,    # strict — security regressions are dangerous
-    "trigger_quality": 0.05,
-}
-
-
-def detect_skill_category(skill_path: Path) -> str:
-    """Detect skill category from frontmatter or directory structure.
-
-    Categories: tool, knowledge, orchestration, review, rule, learning.
-    Falls back to 'knowledge' if no scripts, 'tool' if scripts exist.
-    """
-    skill_md = skill_path / "SKILL.md" if skill_path.is_dir() else skill_path
-    if skill_md.exists():
+def _load_protected_keywords() -> tuple[str, ...]:
+    """Load protected keywords from config file, falling back to defaults."""
+    config_path = Path.home() / ".openclaw" / "protected_keywords.json"
+    if config_path.exists():
         try:
-            content = skill_md.read_text(encoding="utf-8")
-            if content.startswith("---") and content.count("---") >= 2:
-                fm = content.split("---", 2)[1].lower()
-                # Check explicit category in frontmatter
-                for line in fm.split("\n"):
-                    if line.strip().startswith("category:"):
-                        cat = line.split(":", 1)[1].strip().strip("\"'")
-                        if cat in CATEGORY_WEIGHTS:
-                            return cat
-                # Infer from name/description
-                if any(w in fm for w in ("orchestrat", "pipeline", "编排", "调度")):
-                    return "orchestration"
-                if any(w in fm for w in ("review", "审查", "评审", "critic")):
-                    return "review"
-                if any(w in fm for w in ("learn", "improve", "自改进", "评估")):
-                    return "learning"
-                if any(w in fm for w in ("rule", "guardrail", "规则", "约束")):
-                    return "rule"
-        except OSError:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return tuple(str(k).lower() for k in data)
+        except (json.JSONDecodeError, OSError):
             pass
+    return _DEFAULT_PROTECTED_KEYWORDS
 
-    # Fallback: scripts → tool, no scripts → knowledge
-    if skill_path.is_dir() and (skill_path / "scripts").exists():
-        return "tool"
-    return "knowledge"
-
-
-def get_weights_for_category(category: str) -> dict[str, float]:
-    """Get dimension weights for a skill category."""
-    return CATEGORY_WEIGHTS.get(category, DEFAULT_WEIGHTS)
+PROTECTED_KEYWORDS = _load_protected_keywords()
 
 # ---------------------------------------------------------------------------
 # Timestamp helpers
@@ -143,32 +72,12 @@ def read_json(path: Path) -> Any:
         return json.load(handle)
 
 
-def _atomic_write(path: Path, data: bytes) -> Path:
-    """Write data to path atomically using write-then-rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-    )
-    try:
-        os.write(fd, data)
-        os.fsync(fd)
-        os.close(fd)
-        os.rename(tmp_path, str(path))
-    except BaseException:
-        os.close(fd) if not os.get_inheritable(fd) else None
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    return path
-
-
 def write_json(path: Path, payload: Any) -> Path:
-    content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    return _atomic_write(path, content.encode("utf-8"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    return path
 
 
 def read_text(path: Path) -> str:
@@ -176,7 +85,9 @@ def read_text(path: Path) -> str:
 
 
 def write_text(path: Path, content: str) -> Path:
-    return _atomic_write(path, content.encode("utf-8"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +114,7 @@ def load_source_paths(target: Path, explicit_sources: Iterable[str] | None = Non
         source = Path(raw).expanduser()
         if source.exists():
             sources.append(source.resolve())
-    candidates = [target / "memory", target / "learnings", target / ".feedback", target / "feedback-store"]
+    candidates = [target / "memory", target / "learnings", target / ".feedback"]
     for candidate in candidates:
         if candidate.exists():
             sources.append(candidate.resolve())
@@ -224,7 +135,7 @@ def expand_source(source: Path) -> list[dict[str, Any]]:
     for child in sorted(source.rglob("*")):
         if not child.is_file():
             continue
-        if child.suffix.lower() not in {".md", ".txt", ".json", ".jsonl", ".log"}:
+        if child.suffix.lower() not in {".md", ".txt", ".json", ".log"}:
             continue
         entries.append(load_source_entry(child))
     return entries

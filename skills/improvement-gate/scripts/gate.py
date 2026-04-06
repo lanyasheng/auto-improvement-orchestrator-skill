@@ -57,12 +57,26 @@ class SchemaGate(GateLayer):
     def __init__(self):
         super().__init__("schema", required=True)
 
+    VALID_CATEGORIES = {"docs", "reference", "guardrail", "prompt", "workflow", "tests"}
+    VALID_RISK_LEVELS = {"low", "medium", "high"}
+
     def validate(self, candidate, execution=None):
         required_fields = ["id", "category", "risk_level", "execution_plan"]
         missing = [f for f in required_fields if f not in candidate]
+        if missing:
+            return {"passed": False, "details": f"Missing: {missing}", "layer": self.name}
+        errors = []
+        if not isinstance(candidate.get("id"), str) or not candidate["id"]:
+            errors.append("id must be a non-empty string")
+        if candidate.get("category") not in self.VALID_CATEGORIES:
+            errors.append(f"category '{candidate.get('category')}' not in {self.VALID_CATEGORIES}")
+        if candidate.get("risk_level") not in self.VALID_RISK_LEVELS:
+            errors.append(f"risk_level '{candidate.get('risk_level')}' not in {self.VALID_RISK_LEVELS}")
+        if not isinstance(candidate.get("execution_plan"), dict):
+            errors.append("execution_plan must be a dict")
         return {
-            "passed": len(missing) == 0,
-            "details": f"Missing: {missing}" if missing else "OK",
+            "passed": len(errors) == 0,
+            "details": "; ".join(errors) if errors else "OK",
             "layer": self.name,
         }
 
@@ -120,14 +134,23 @@ class RegressionGate(GateLayer):
         super().__init__("regression", required=True)
 
     def validate(self, candidate, execution=None):
-        # Check evaluator evidence for regression signals
+        # Check evaluator evidence
         evidence = candidate.get("evaluator_evidence", {})
-        if not evidence or not evidence.get("enabled"):
-            return {"passed": True, "details": "No evaluator evidence available", "layer": self.name}
-        verdict = evidence.get("verdict", "")
-        if verdict == "reject":
-            return {"passed": False, "details": "Evaluator verdict: reject", "layer": self.name}
-        return {"passed": True, "details": f"Evaluator verdict: {verdict}", "layer": self.name}
+        if evidence and evidence.get("enabled"):
+            verdict = evidence.get("verdict", "")
+            if verdict == "reject":
+                return {"passed": False, "details": "Evaluator verdict: reject", "layer": self.name}
+            overall = evidence.get("overall_score_10", 10.0)
+            if overall < 4.0:
+                return {"passed": False, "details": f"Evaluator overall score too low: {overall}/10", "layer": self.name}
+
+        # Check execution result for regression signals
+        if execution:
+            exec_result = execution.get("result", {})
+            if exec_result.get("status") == "error":
+                return {"passed": False, "details": f"Execution error: {exec_result.get('reason', 'unknown')}", "layer": self.name}
+
+        return {"passed": True, "details": "No regression detected", "layer": self.name}
 
 
 class ReviewGate(GateLayer):
@@ -138,7 +161,7 @@ class ReviewGate(GateLayer):
 
     def validate(self, candidate, execution=None):
         recommendation = candidate.get("recommendation", "hold")
-        panel = candidate.get("panel_result", {})
+        panel = candidate.get("panel", candidate.get("panel_result", {}))
         label = panel.get("cognitive_label", "")
         llm_verdict = candidate.get("llm_verdict", {})
         llm_decision = llm_verdict.get("decision", "")
@@ -171,66 +194,8 @@ class ReviewGate(GateLayer):
         return {"passed": False, "details": f"Recommendation: {recommendation}", "layer": self.name}
 
 
-class DoubtGate(GateLayer):
-    """Layer 5: Reject candidates with speculative/hedging language.
-
-    Scans candidate title and description for words like "might", "could",
-    "possibly", "perhaps" that indicate the proposer isn't confident the
-    change will actually help. Candidates should provide evidence, not hopes.
-    """
-
-    HEDGING_WORDS_EN = (
-        "might", "could", "possibly", "perhaps", "maybe",
-        "potentially", "likely", "probably", "should help",
-        "may improve", "consider", "worth trying",
-    )
-    HEDGING_WORDS_ZH = (
-        "可能", "也许", "或许", "大概", "应该会", "试试看", "不确定",
-    )
-    # Threshold varies by category: prompt/workflow candidates legitimately
-    # use words like "consider" and "should help", so they get a higher bar.
-    CATEGORY_THRESHOLDS = {
-        "docs": 2,
-        "reference": 2,
-        "guardrail": 2,
-        "prompt": 4,      # prompt candidates often discuss tradeoffs
-        "workflow": 4,
-        "tests": 3,
-        "code": 3,
-    }
-    DEFAULT_THRESHOLD = 3
-
-    def __init__(self):
-        super().__init__("doubt", required=True)
-
-    def validate(self, candidate, execution=None):
-        text = " ".join([
-            candidate.get("title", ""),
-            candidate.get("description", ""),
-            candidate.get("proposed_change_summary", ""),
-        ]).lower()
-
-        hits = []
-        for word in self.HEDGING_WORDS_EN + self.HEDGING_WORDS_ZH:
-            if word in text:
-                hits.append(word)
-
-        category = candidate.get("category", "")
-        threshold = self.CATEGORY_THRESHOLDS.get(category, self.DEFAULT_THRESHOLD)
-
-        if len(hits) >= threshold:
-            return {
-                "passed": False,
-                "details": f"Speculative language detected ({len(hits)} hits, threshold={threshold} "
-                           f"for {category or 'unknown'} category: {', '.join(hits[:5])}). "
-                           f"Provide evidence instead of hedging.",
-                "layer": self.name,
-            }
-        return {"passed": True, "details": "OK", "layer": self.name}
-
-
 class HumanReviewGate(GateLayer):
-    """Layer 6 (optional): Request human review for non-trivial changes.
+    """Layer 5 (optional): Request human review for non-trivial changes.
 
     When a candidate reaches this layer, it means all mechanical gates passed
     but the change is too risky for auto-keep. This layer:
@@ -297,7 +262,7 @@ class HumanReviewGate(GateLayer):
         return {"completed": False, "reason": "still_pending"}
 
 
-DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate(), DoubtGate(), HumanReviewGate()]
+DEFAULT_GATE_LAYERS = [SchemaGate(), CompileGate(), LintGate(), RegressionGate(), ReviewGate(), HumanReviewGate()]
 
 
 def run_gate_layers(
@@ -477,6 +442,13 @@ def main() -> int:
     category = candidate.get("category")
     target_path = candidate.get("target_path")
 
+    # Collect blockers from all failed layers
+    blockers = [
+        {"layer": r["layer"], "details": r["details"]}
+        for r in layer_verdict.get("layer_results", [])
+        if not r["passed"]
+    ]
+
     output_path = Path(args.output).expanduser().resolve() if args.output else make_receipt_path(state_root, "gate", run_id, candidate_id)
     receipt = {
         "schema_version": SCHEMA_VERSION,
@@ -492,6 +464,7 @@ def main() -> int:
         "source_ranking_artifact": args.ranking,
         "source_execution_artifact": args.execution,
         "rollback": rollback_outcome,
+        "blockers": blockers,
         "gate_layers": layer_verdict,
         "next_step": "propose_candidates" if decision == "keep" else "human_promote_review" if decision == "pending_promote" else "re-propose_or_manual_override",
         "next_owner": "proposer" if decision == "keep" else "human" if decision == "pending_promote" else "proposer",

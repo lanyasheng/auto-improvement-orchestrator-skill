@@ -67,25 +67,10 @@ class ParetoFront:
                 "dominated_count": len(dominated),
                 "front_size": len(self.entries)}
 
-    def check_regression(
-        self,
-        scores: dict[str, float],
-        tolerances: dict[str, float] | None = None,
-    ) -> dict:
-        """Check if new scores would cause a regression on any Pareto dimension.
-
-        Args:
-            scores: New dimension scores to check.
-            tolerances: Per-dimension regression tolerance (0.0-1.0).
-                        If None, uses DIMENSION_REGRESSION_TOLERANCE from common.
-                        Falls back to 0.05 for dimensions not in the map.
-        """
+    def check_regression(self, scores: dict[str, float]) -> dict:
+        """Check if new scores would cause a regression on any Pareto dimension."""
         if not self.entries:
             return {"regressed": False, "details": "Empty front"}
-
-        if tolerances is None:
-            from lib.common import DIMENSION_REGRESSION_TOLERANCE
-            tolerances = DIMENSION_REGRESSION_TOLERANCE
 
         # Find the best score for each dimension across the front
         best_per_dim: dict[str, float] = {}
@@ -97,10 +82,9 @@ class ParetoFront:
         regressions = []
         for dim, best in best_per_dim.items():
             new_score = scores.get(dim, 0)
-            tol = tolerances.get(dim, 0.05)
-            if new_score < best * (1 - tol):
+            if new_score < best * 0.95:  # 5% tolerance
                 regressions.append({"dimension": dim, "best": best, "new": new_score,
-                                    "delta": new_score - best, "tolerance": tol})
+                                    "delta": new_score - best})
 
         return {"regressed": len(regressions) > 0, "regressions": regressions,
                 "dimensions_checked": len(best_per_dim)}

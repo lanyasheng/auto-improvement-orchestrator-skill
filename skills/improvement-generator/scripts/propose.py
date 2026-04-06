@@ -342,40 +342,141 @@ def _llm_propose_skill_fix(target: Path, failed_tasks: list[dict]) -> dict | Non
         return None
 
 
-def _find_correction_hotspots(feedback_entries: list[dict]) -> dict[str, int]:
-    """Extract user correction hotspots from feedback.jsonl source entries.
+def _llm_analyze_and_propose(target: Path, max_candidates: int) -> list[dict] | None:
+    """Use LLM to analyze a SKILL.md and propose quality improvements.
 
-    Returns a dimension -> count mapping of the most-corrected dimensions.
+    This is the default proposal path (Plan A). Reads the target SKILL.md,
+    sends it to claude CLI for analysis, and returns concrete improvement
+    candidates based on actual content issues rather than generic templates.
+
+    Returns None if claude CLI is unavailable or parsing fails, so the
+    caller can fall back to template builders.
     """
-    hotspots: dict[str, int] = {}
-    for entry in feedback_entries:
-        if not isinstance(entry, dict):
-            continue
-        entry_path = entry.get("path", "")
-        if "feedback" not in entry_path or not entry_path.endswith(".jsonl"):
-            continue
+    import shutil
+    import subprocess
+    import json as _json
+
+    skill_md = target / "SKILL.md" if target.is_dir() else target
+    if not skill_md.exists():
+        return None
+    if shutil.which("claude") is None:
+        return None
+
+    skill_content = skill_md.read_text(encoding="utf-8")
+
+    prompt = (
+        "You are a skill quality analyst. Analyze this SKILL.md and identify "
+        f"the top {max_candidates} concrete quality issues.\n\n"
+        f"## SKILL.md Content\n```\n{skill_content[:4000]}\n```\n\n"
+        "For each issue, propose a specific fix. Respond with ONLY a JSON array "
+        "where each element has these fields:\n"
+        "- title: short description of the fix\n"
+        "- target_path: relative path within the skill (use \"SKILL.md\" if targeting the main file)\n"
+        "- category: one of docs/reference/guardrail/prompt/workflow/tests\n"
+        "- risk_level: low/medium/high\n"
+        "- rationale: why this change improves quality\n"
+        "- proposed_change_summary: what will be changed\n"
+        "- executor_support: boolean, true if the change can be applied automatically\n"
+        "- execution_plan: object with 'action' (append_markdown_section/replace_markdown_section/insert_before) "
+        "and 'content_lines' (array of strings to add/replace)\n\n"
+        "Focus on actionable, specific improvements — not generic advice. "
+        "Prefer low-risk changes that can be auto-applied. "
+        "Return ONLY the JSON array, no surrounding text."
+    )
+
+    try:
+        result = subprocess.run(
+            ["claude", "-p", "--output-format", "json"],
+            input=prompt, capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            return None
+
+        # Parse claude output (may be wrapped in JSON envelope)
         try:
-            import json as _json
-            with open(entry_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = _json.loads(line)
-                    except _json.JSONDecodeError:
-                        continue
-                    if event.get("outcome") in ("correction", "partial"):
-                        dim = event.get("dimension_hint")
-                        if dim:
-                            hotspots[dim] = hotspots.get(dim, 0) + 1
-        except OSError:
-            continue
-    return hotspots
+            claude_out = _json.loads(result.stdout)
+            text = claude_out.get("result", result.stdout)
+        except (_json.JSONDecodeError, TypeError):
+            text = result.stdout
+
+        # Extract JSON array from response (may be wrapped in markdown code blocks)
+        text = text.strip()
+        if "```" in text:
+            # Strip markdown fences
+            lines = text.split("\n")
+            inside = False
+            json_lines = []
+            for line in lines:
+                if line.strip().startswith("```"):
+                    inside = not inside
+                    continue
+                if inside:
+                    json_lines.append(line)
+            text = "\n".join(json_lines).strip()
+
+        # Try to find JSON array boundaries
+        first_bracket = text.find("[")
+        last_bracket = text.rfind("]")
+        if first_bracket >= 0 and last_bracket > first_bracket:
+            text = text[first_bracket:last_bracket + 1]
+
+        parsed = _json.loads(text)
+        if not isinstance(parsed, list) or not parsed:
+            return None
+
+        # Convert parsed items to candidate dicts
+        candidates = []
+        skill_md_resolved = str(skill_md.resolve())
+        for idx, item in enumerate(parsed[:max_candidates], start=1):
+            if not isinstance(item, dict):
+                continue
+            # Resolve target_path relative to skill directory
+            item_target = item.get("target_path", "SKILL.md")
+            if target.is_dir():
+                resolved_path = str((target / item_target).resolve())
+            else:
+                resolved_path = skill_md_resolved
+
+            category = item.get("category", "docs")
+            valid_categories = {"docs", "reference", "guardrail", "prompt", "workflow", "tests"}
+            if category not in valid_categories:
+                category = "docs"
+
+            risk = item.get("risk_level", "low")
+            if risk not in {"low", "medium", "high"}:
+                risk = "low"
+
+            exec_plan = item.get("execution_plan", {})
+            if not isinstance(exec_plan, dict):
+                exec_plan = {}
+            # Ensure required fields in execution_plan
+            if "action" not in exec_plan:
+                exec_plan["action"] = "append_markdown_section"
+            if "content_lines" not in exec_plan:
+                exec_plan["content_lines"] = []
+
+            candidates.append({
+                "id": f"cand-{idx:02d}-llm-{slugify(category)}",
+                "title": item.get("title", f"LLM-proposed improvement #{idx}"),
+                "target_path": resolved_path,
+                "category": category,
+                "rationale": item.get("rationale", "LLM-identified quality issue"),
+                "risk_level": risk,
+                "proposed_change_summary": item.get("proposed_change_summary", ""),
+                "stage": "proposed",
+                "source_refs": ["llm-analysis"],
+                "executor_support": bool(item.get("executor_support", False)),
+                "execution_plan": exec_plan,
+            })
+
+        return candidates if candidates else None
+
+    except Exception:
+        return None
 
 
 def generate_candidates(target: Path, feedback_entries: list[dict], max_candidates: int) -> list[dict]:
-    # Check for evaluator failure data first — this is the highest-signal input
+    # Priority 1: Evaluator failure-driven fix (highest-signal input)
     eval_failures = _find_evaluator_failures(feedback_entries)
     if eval_failures:
         llm_fix = _llm_propose_skill_fix(target, eval_failures)
@@ -394,6 +495,12 @@ def generate_candidates(target: Path, feedback_entries: list[dict], max_candidat
                     break
             return candidates[:max_candidates]
 
+    # Priority 2: LLM analysis of target skill (default path)
+    llm_candidates = _llm_analyze_and_propose(target, max_candidates)
+    if llm_candidates:
+        return llm_candidates[:max_candidates]
+
+    # Priority 3: Template fallback (when claude CLI is unavailable)
     feedback_buckets = classify_feedback(feedback_entries)
     builders = [
         build_docs_candidate,

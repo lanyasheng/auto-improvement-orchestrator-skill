@@ -262,7 +262,32 @@ def main() -> int:
 
     target_file = Path(candidate["target_path"]).expanduser().resolve()
     if not target_file.exists() or not target_file.is_file():
-        raise SystemExit(f"target file not found: {target_file}")
+        result = {
+            "status": "error",
+            "modified": False,
+            "reason": f"target file not found: {target_file}",
+        }
+        output_path = Path(args.output).expanduser().resolve() if args.output else paths["executions"] / f"{run_id}-{candidate['id']}.json"
+        artifact = {
+            "schema_version": SCHEMA_VERSION,
+            "lane": ranking_artifact.get("lane", "generic-skill"),
+            "run_id": run_id,
+            "stage": "executed",
+            "status": "error",
+            "created_at": utc_now_iso(),
+            "candidate_id": candidate["id"],
+            "target_path": str(target_file),
+            "result": result,
+            "truth_anchor": str(output_path),
+        }
+        write_json(output_path, artifact)
+        update_state(
+            state_root, run_id=run_id, stage="executed", status="error",
+            target_path=str(target_file), truth_anchor=str(output_path),
+            extra={"candidate_id": candidate["id"]},
+        )
+        print(str(output_path))
+        return 1
 
     backup_path = paths["executions"] / "backups" / run_id / f"{candidate['id']}-{target_file.name}"
     backup_file(target_file, backup_path)

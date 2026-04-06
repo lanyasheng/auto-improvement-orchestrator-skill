@@ -51,18 +51,18 @@ DEFAULT_CATEGORY_WEIGHTS = {
     "tests": 1.5,
 }
 CATEGORY_BONUS = DEFAULT_CATEGORY_WEIGHTS  # backward compat alias
-RISK_PENALTY = {"low": 0.0, "medium": 2.0, "high": 4.5}
-HEURISTIC_WEIGHT = 0.7
-EVALUATOR_WEIGHT = 0.3
+RISK_PENALTY = {"low": 0.0, "medium": 1.5, "high": 3.0}  # ranking signal only; high-risk is hard-rejected by build_recommendation
+HEURISTIC_WEIGHT = 0.5
+EVALUATOR_WEIGHT = 0.5
 
 # Blended weight schemes when LLM judge is enabled
 # heuristic + llm only
-HEURISTIC_WEIGHT_WITH_LLM = 0.6
-LLM_WEIGHT_WITHOUT_EVALUATOR = 0.4
+HEURISTIC_WEIGHT_WITH_LLM = 0.3
+LLM_WEIGHT_WITHOUT_EVALUATOR = 0.7
 # heuristic + llm + evaluator (all three)
-HEURISTIC_WEIGHT_ALL_THREE = 0.5
-LLM_WEIGHT_ALL_THREE = 0.3
-EVALUATOR_WEIGHT_ALL_THREE = 0.2
+HEURISTIC_WEIGHT_ALL_THREE = 0.2
+LLM_WEIGHT_ALL_THREE = 0.5
+EVALUATOR_WEIGHT_ALL_THREE = 0.3
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +151,8 @@ def heuristic_score(candidate: dict) -> tuple[float, float]:
     risk_level = candidate.get("risk_level", "medium")
     source_refs = candidate.get("source_refs", []) or []
     executor_support = bool(candidate.get("executor_support"))
-    base = 4.0
-    category_bonus = CATEGORY_BONUS.get(category, 0.5)
+    base = 2.0
+    category_bonus = 0.0  # category gating handled by build_recommendation
     source_signal = min(len(source_refs), 3) * 0.5
     support_bonus = 0.5 if executor_support else 0.0
     protected_penalty = 2.5 if protected_target(candidate.get("target_path", "")) else 0.0
@@ -204,13 +204,13 @@ def build_recommendation(candidate: dict, score: float, blockers: list[str], evi
         boundary = evidence.get("boundary", {})
         if is_low_risk_keep and boundary.get("auto_promote_eligible") and evidence.get("verdict") != "reject":
             return "accept_for_execution"
-        if evidence.get("verdict") == "reject" or score < 4.0:
+        if evidence.get("verdict") == "reject" or score < 2.0:
             return "reject"
         return "hold"
 
     if is_low_risk_keep:
         return "accept_for_execution"
-    if candidate.get("risk_level") == "high" or score < 4.0:
+    if candidate.get("risk_level") == "high" or score < 2.0:
         return "reject"
     return "hold"
 
@@ -247,6 +247,27 @@ def score_candidate(
     target_content: str = "",
 ) -> dict:
     heuristic, risk_penalty = heuristic_score(candidate)
+
+    # Semantic relevance check
+    relevance_penalty = 0.0
+    if target_content:
+        content_lines = candidate.get("execution_plan", {}).get("content_lines", [])
+        if content_lines:
+            candidate_words = set()
+            for line in content_lines:
+                candidate_words.update(w.lower() for w in line.split() if len(w) > 3)
+            target_words = set(w.lower() for w in target_content.split() if len(w) > 3)
+            overlap = candidate_words & target_words
+            if len(candidate_words) > 0 and len(overlap) == 0:
+                relevance_penalty = 2.0
+    heuristic = max(0.0, heuristic - relevance_penalty)
+
+    # Diff size factor: larger changes get slightly lower scores (more scrutiny needed)
+    content_lines = candidate.get("execution_plan", {}).get("content_lines", [])
+    total_lines = sum(len(line) for line in content_lines) if content_lines else 0
+    if total_lines > 500:
+        heuristic = max(0.0, heuristic - 1.0)
+
     evidence = build_evaluator_evidence(candidate) if use_evaluator_evidence else None
     evaluator_score = evidence.get("overall_score_10") if evidence else None
 
@@ -354,8 +375,8 @@ def _heuristic_score_with_config(candidate: dict, config: ReviewerConfig) -> tup
     risk_level = candidate.get("risk_level", "medium")
     source_refs = candidate.get("source_refs", []) or []
     executor_support = bool(candidate.get("executor_support"))
-    base = 4.0
-    category_bonus = config.category_weights.get(category, 0.5)
+    base = 2.0
+    category_bonus = 0.0  # category gating handled by build_recommendation
     source_signal = min(len(source_refs), 3) * 0.5
     support_bonus = 0.5 if executor_support else 0.0
     protected_penalty = 2.5 if protected_target(candidate.get("target_path", "")) else 0.0
@@ -363,6 +384,23 @@ def _heuristic_score_with_config(candidate: dict, config: ReviewerConfig) -> tup
     risk_penalty = round(raw_risk * config.risk_sensitivity, 2)
     score = max(0.0, min(10.0, round(base + category_bonus + source_signal + support_bonus - risk_penalty, 2)))
     return score, risk_penalty
+
+
+def _user_impact_bonus(candidate: dict) -> float:
+    """user_advocate reviewer: bonus for user-facing improvements."""
+    rationale = candidate.get("rationale", "").lower()
+    summary = candidate.get("proposed_change_summary", "").lower()
+    text = rationale + " " + summary
+    user_keywords = ["user", "用户", "读者", "体验", "experience", "usability", "误用", "misuse"]
+    return 0.5 if any(k in text for k in user_keywords) else 0.0
+
+
+def _security_penalty(candidate: dict) -> float:
+    """security_auditor reviewer: penalty for security-sensitive changes."""
+    content_lines = candidate.get("execution_plan", {}).get("content_lines", [])
+    text = " ".join(content_lines).lower() if content_lines else ""
+    risk_keywords = ["password", "token", "secret", "api_key", "credential", "auth", "exec(", "eval(", "os.system"]
+    return 2.0 if any(k in text for k in risk_keywords) else 0.0
 
 
 def score_candidate_with_config(
@@ -379,6 +417,10 @@ def score_candidate_with_config(
     config.use_evaluator is True.  LLM judge is blended when provided.
     """
     heuristic, risk_penalty = _heuristic_score_with_config(candidate, config)
+    if config.name == "user_advocate":
+        heuristic = min(10.0, heuristic + _user_impact_bonus(candidate))
+    elif config.name == "security_auditor":
+        heuristic = max(0.0, heuristic - _security_penalty(candidate))
     evidence = build_evaluator_evidence(candidate) if config.use_evaluator else None
     evaluator_score = evidence.get("overall_score_10") if evidence else None
 
@@ -500,16 +542,20 @@ def run_multi_reviewer_panel(
         label = "CONSENSUS"
         final_rec = recommendations[0]
     else:
-        # Find the most common recommendation
         from collections import Counter
         counts = Counter(recommendations)
-        most_common_rec, most_common_count = counts.most_common(1)[0]
-        if most_common_count >= 2:
+        most_common = counts.most_common()
+        top_count = most_common[0][1]
+        # Check for tie: if top two have equal count, treat as split
+        if len(most_common) >= 2 and most_common[0][1] == most_common[1][1]:
+            label = "SPLIT"
+            final_rec = "hold"  # Conservative default on tie
+        elif top_count >= 2:
             label = "VERIFIED"
-            final_rec = most_common_rec
+            final_rec = most_common[0][0]
         else:
             label = "DISPUTED"
-            final_rec = "hold"  # Default to hold on dispute
+            final_rec = "hold"
 
     avg_score = sum(r["score"] for r in reviews) / len(reviews)
     return {
@@ -538,7 +584,8 @@ def main() -> int:
     # --- Read target skill content for LLM context ---
     target_content = ""
     if llm_judge_instance:
-        skill_md = Path(target_path).parent / "SKILL.md"
+        tp = Path(target_path)
+        skill_md = tp / "SKILL.md" if tp.is_dir() else tp.parent / "SKILL.md"
         if skill_md.exists():
             try:
                 target_content = skill_md.read_text(encoding="utf-8")
