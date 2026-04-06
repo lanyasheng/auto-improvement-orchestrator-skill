@@ -219,3 +219,9 @@ Do not add new content that doesn't exist in the original. Do not inject opinion
 - 完整模式目录（29+ 模式详解和示例）: `references/full-pattern-catalog.md`
 - 中文 AI vs 人味写作对比示例: `references/writing-patterns-zh.md`
 - 场景语气指南和快速修复清单: `references/tone-guide.md`
+
+## Operator Notes
+
+- This skill is advisory/planning-oriented. It does not connect to external delivery platforms, schedule sends, or manage subscribers directly.
+- When answering requests, keep the strategy inside the skill and explicitly call out when execution, analytics, or platform operations require a separate automation or operator workflow.
+- For production usage, pair the skill with a separate execution lane/tool for actual publishing, scheduling, or analytics collection.
