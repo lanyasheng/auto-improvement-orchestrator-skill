@@ -47,7 +47,8 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 {
   "final_scores": {
     "accuracy": 0.83, "coverage": 0.80, "reliability": 1.00,
-    "efficiency": 0.87, "security": 0.83, "trigger_quality": 0.60
+    "efficiency": 0.87, "security": 1.00, "trigger_quality": 0.60,
+    "leakage": 1.00, "knowledge_density": 0.83
   }
 }
 ```
@@ -58,8 +59,8 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 python3 skills/improvement-learner/scripts/self_improve.py \
   --skill-path /path/to/your/skill \
   --max-iterations 5 \
-  --memory-dir /tmp/memory \
-  --state-root /tmp/state
+  --memory-dir ~/.openclaw/shared-context/intel/auto-improvement/memory \
+  --state-root ~/.openclaw/shared-context/intel/auto-improvement/state
 ```
 
 ### Run full pipeline
@@ -67,7 +68,7 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 ```bash
 python3 skills/improvement-orchestrator/scripts/orchestrate.py \
   --target /path/to/skill \
-  --state-root /tmp/state \
+  --state-root ~/.openclaw/shared-context/intel/auto-improvement/state \
   --max-retries 3
 ```
 
@@ -76,7 +77,7 @@ python3 skills/improvement-orchestrator/scripts/orchestrate.py \
 ```bash
 python3 skills/improvement-evaluator/scripts/evaluate.py \
   --task-suite /path/to/task_suite.yaml \
-  --state-root /tmp/eval \
+  --state-root ~/.openclaw/shared-context/intel/auto-improvement/eval \
   --standalone --mock  # remove --mock for real claude -p
 ```
 
@@ -163,7 +164,7 @@ Three evaluation signals:
 
 ### Retry loop: "Ralph Wiggum"
 
-Named after the observation that naive LLM retry loops fail the same way repeatedly. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blocker was) and injects it into the next generator call. The generator reads this trace and skips strategies that have failed 3+ times on the same dimension. Inspired by GEPA's trace-aware reflection.
+Named after the observation that naive LLM retry loops fail the same way repeatedly. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blockers were) and injects it into the next generator call via `--trace`. The generator reads this trace and deprioritizes the same category that previously failed. When all candidates are rejected, the rejection context is also fed back for the next round. Inspired by GEPA's trace-aware reflection.
 
 ---
 
@@ -171,7 +172,7 @@ Named after the observation that naive LLM retry loops fail the same way repeate
 
 ### Stage 1: Generator
 
-Analyzes target skill structure + reads feedback signals (user feedback, memory patterns, previous failure traces) → produces ranked improvement candidates.
+**LLM-first architecture**: reads the target SKILL.md and uses LLM analysis to identify concrete quality issues and propose targeted fixes. Falls back to template-based candidates when the `claude` CLI is unavailable. Also consumes feedback signals (user feedback, evaluator failure traces, previous retry traces).
 
 Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `workflow`, `tests`) and risk level (`low`/`medium`/`high`). Only `low`-risk document candidates auto-execute; everything else enters human review.
 
@@ -181,10 +182,10 @@ Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `w
 
 | Mode | What it measures |
 |------|-----------------|
-| Heuristic (default) | Category bonus + source refs + risk penalty |
-| + Evaluator evidence | Heuristic 70% + evaluator rubric 30% |
-| + LLM Judge | Heuristic 60% + LLM semantic analysis 40% |
-| + Panel | 2+ independent reviewers → CONSENSUS / VERIFIED / DISPUTED |
+| Heuristic (default) | Source refs + risk penalty + semantic relevance + diff size |
+| + Evaluator evidence | Heuristic 50% + evaluator rubric 50% |
+| + LLM Judge | Heuristic 30% + LLM semantic analysis 70% |
+| + Panel | 4 differentiated reviewers → CONSENSUS / VERIFIED / SPLIT |
 
 ### Stage 3: Evaluator (Novel Contribution)
 
@@ -217,17 +218,16 @@ See `skills/improvement-evaluator/references/task-format.md` for the full specif
 
 ### Stage 4: Gate
 
-7-layer mechanical gate. Any layer fail = reject.
+6-layer mechanical gate. 4 blocking layers (fail = reject) + 2 advisory layers (warn but pass).
 
-| Layer | Pass Condition |
-|-------|---------------|
-| SchemaGate | Valid JSON structure |
-| CompileGate | Target file syntactically valid |
-| LintGate | No new lint warnings |
-| RegressionGate | No Pareto dimension regressed (per-dimension tolerance: security 2%, efficiency 10%, others 5%) |
-| ReviewGate | Consensus is not DISPUTED+reject |
-| DoubtGate | Candidate description has < threshold hedging words (threshold varies by category) |
-| HumanReviewGate | High-risk candidates need manual approval |
+| Layer | Pass Condition | Blocking? |
+|-------|---------------|-----------|
+| SchemaGate | Valid JSON + correct field types/values | Yes |
+| CompileGate | Target file syntactically valid | Yes |
+| LintGate | No new lint warnings | No (advisory) |
+| RegressionGate | Evaluator score above threshold + no execution errors | Yes |
+| ReviewGate | Panel consensus not SPLIT+reject, LLM judge not reject | Yes |
+| HumanReviewGate | High-risk candidates need manual approval | No (advisory) |
 
 Decisions: `keep` / `pending_promote` / `reject` / `revert`
 
@@ -239,7 +239,7 @@ Applies accepted candidates with automatic backup. 4 action types: `append_markd
 
 Karpathy self-improvement loop:
 
-1. Evaluate across 6 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality) with category-aware weights
+1. Evaluate across 8 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality, leakage, knowledge_density) with category-aware weights
 2. Find weakest dimension → propose targeted improvement
 3. Backup + apply → re-evaluate
 4. Keep if Pareto-accepted (no dimension regressed), revert otherwise
@@ -300,7 +300,7 @@ Full analysis in [EVALUATION_REPORT.md](EVALUATION_REPORT.md).
 
 **Why conditional evaluation?** — The evaluator calls `claude -p` per task (~$3/eval). The discriminator score acts as a cheap pre-filter; only candidates above threshold (default: 6.0) proceed. Saves 60%+ of evaluation cost.
 
-**Why three-layer memory?** — HOT (≤100, always loaded) / WARM (overflow, on-demand) / COLD (archived). If a strategy has failed 3+ times on the same dimension, the generator skips it entirely.
+**Why three-layer memory?** — HOT (≤100, always loaded) / WARM (overflow, on-demand) / COLD (archived). Failed strategies are deprioritized in subsequent rounds via the Ralph Wiggum trace mechanism.
 
 **Why LLM-as-judge for accuracy?** — Regex structural checks (26 items) showed R²=0.00 against evaluator pass rate. 17/26 checks had zero variance. The LLM judge scores clarity, specificity, completeness, actionability, differentiation via `claude -p`.
 
@@ -341,13 +341,17 @@ lib/
 
 **Cold memory not implemented** — The three-layer memory's COLD tier (>3 months archive) is designed but not built.
 
+**No concurrent state locking** — `state_machine.py` uses non-atomic JSON read-modify-write. Running multiple pipeline instances against the same `state_root` can cause TOCTOU races.
+
+**Regex accuracy fallback is useless** — When `claude` CLI is unavailable, the accuracy dimension falls back to regex checks with self-measured R²=0.00 correlation to actual quality. The LLM judge path (`claude -p`) is strongly recommended.
+
 ---
 
 ## Comparison
 
 | System | Optimizes | Granularity | Human-readable diff? | Multi-dim? | Feedback source |
 |--------|-----------|-------------|:--------------------:|:----------:|-----------------|
-| **This project** | SKILL.md docs | Section | Yes | 6-dim Pareto | Task suite + user implicit |
+| **This project** | SKILL.md docs | Section | Yes | 8-dim Pareto | Task suite + user implicit |
 | DSPy | Prompt tokens | Token | No (Bayesian search) | Single | User-defined metric |
 | TextGrad | LLM output vars | Token | No | Single | LLM "gradients" |
 | GEPA | Code generation | Function | Yes | Single | Trace reflection |
