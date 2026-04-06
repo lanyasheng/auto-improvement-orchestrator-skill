@@ -7,7 +7,7 @@
 
 OpenClaw 生态的 Skill 数量已经上万（VoltAgent 精选集筛选后 5000+），团队内部也有几十个。写 Skill 不难，难的是改完之后判断效果。你加了一段 guardrail，到底是提升了安全性还是干扰了正常输出？你补了一个 example，到底是帮到了 AI 还是占了上下文预算？
 
-目前的做法：手动试几次、让同事跑几个 case、凭感觉觉得"还行"。Skill 少的时候能凑合，规模上来之后就不够了。没有统一标准，没有稳定性度量，更没有自动化的改进闭环。
+目前的做法：手动试几次、让同事跑几个 case、凭感觉觉得"还行"。Skill 少的时候能凑合，规模上来之后就不够了。没有统一标准，没有稳定性度量，更没有自动化的改进机制。
 
 我搭了一套系统来解决这件事。过程中发现了一个推翻所有假设的事实：
 
@@ -72,7 +72,7 @@ graph LR
 
 质量分从 0.63 升到 0.93。OMC 的 Ralph 有个文档里没写的致命细节：**只在 interactive 模式下工作**，headless `-p` 模式的 Stop hook 不触发。这个我在源码里花了两个小时才确认。
 
-## 整体架构：15 个 Skill 组成三层闭环
+## 整体架构：15 个 Skill 组成三层流水线
 
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
 
@@ -350,7 +350,7 @@ graph LR
 
 但 R² 还是 0.00。因为问题不在评估方法上，是"文档质量"和"指导质量"本就是两件事。认知花了很长时间才接受。
 
-## 两层评估 + 用户反馈闭环
+## 两层评估 + 用户反馈回路
 
 ```mermaid
 graph LR
@@ -423,7 +423,7 @@ prompt-hardening skill 的 7 个任务，加载 skill 和裸跑 Claude 的通过
 </div>
 </div>
 
-### 用户反馈闭环
+### 用户反馈回路
 
 task suite 测的是作者预设的场景。用户在真实使用中遇到的问题，task suite 未必覆盖。session-feedback-analyzer 从 Claude Code 的会话日志里挖隐式反馈：
 
@@ -592,7 +592,7 @@ xychart-beta
 
 ## 和现有方案的定位区别
 
-这个领域有不少好工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。我们的系统大量借鉴了它们的设计思路，但尝试在一个它们没有重点覆盖的层面上做整合：把评估、改进、验证组合成一个针对 Skill 的闭环。
+这个领域有不少好工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。我们的系统大量借鉴了它们的设计思路，但尝试在一个它们没有重点覆盖的层面上做整合：把评估、改进、验证组合成一个针对 Skill 的完整流程。
 
 | 系统 | 优化对象 | 粒度 | diff 可读？ | 多维度？ | 反馈来源 |
 |------|---------|------|:-----------:|:-------:|---------|
