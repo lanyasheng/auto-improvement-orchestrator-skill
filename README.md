@@ -164,7 +164,7 @@ Three evaluation signals:
 
 ### Retry loop: "Ralph Wiggum"
 
-Named after the observation that naive LLM retry loops fail the same way repeatedly. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blockers were) and injects it into the next generator call via `--trace`. The generator reads this trace and deprioritizes the same category that previously failed. When all candidates are rejected, the rejection context is also fed back for the next round. Inspired by GEPA's trace-aware reflection.
+Named after the observation that naive LLM retry loops fail the same way repeatedly. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blockers were) and injects it into the next generator call via `--trace`. The generator reads this trace and deprioritizes the same category that previously failed. When all candidates are rejected, the rejection context is also fed back for the next round. Uses trace-aware reflection to avoid repeating failed strategies.
 
 ---
 
@@ -354,7 +354,7 @@ lib/
 | **This project** | SKILL.md docs | Section | Yes | 8-dim Pareto | Task suite + user implicit |
 | DSPy | Prompt tokens | Token | No (Bayesian search) | Single | User-defined metric |
 | TextGrad | LLM output vars | Token | No | Single | LLM "gradients" |
-| GEPA | Code generation | Function | Yes | Single | Trace reflection |
+| MOPrompt | Prompt optimization | Prompt | Yes | Pareto front | Multi-objective evolution |
 | PromptFoo | Prompt assertions | Prompt | Yes | Single (pass rate) | Assertion suite |
 | DeepEval | LLM output | Output | N/A | Multi metric | Rubric |
 | LangSmith | Agent traces | Trace | N/A | Multi metric | Observability |
@@ -365,7 +365,7 @@ lib/
 ## References
 
 - **Karpathy autoresearch** — The keep/discard loop pattern
-- **GEPA (ICLR 2026)** — Trace-aware reflection for failed attempts
+- **MOPrompt (arXiv 2508.01541)** — Multi-objective prompt optimization with Pareto front
 - **ADAS (ICLR 2025)** — Meta agent searching over architecture
 - **Aider Benchmark** — Execution-based coding agent evaluation
 - **DSPy** — Bayesian optimization of LLM prompts
