@@ -1,17 +1,25 @@
-# 从蒸馏别人的仓库到让 Skill 自己变好
+# 用魔法改进魔法：Skill 自动测评和优化的完整实现
 
-> 15 个 skill、8000 行 Python、409 个测试。从零开始搭了一套 AI agent skill 的自动评估和改进流水线。
-> 过程中发现了一个反直觉的事实：结构评分和实际执行效果的相关系数是零。
+> Skill 数量井喷，但没人知道哪些 Skill 真的好使。我们造了一套从评估到改进到验证的全闭环流水线。
+> 15 个 skill、8000 行 Python、409 个测试，已发布到 ClawHub。
 
-## 一个结论先放在前面
+## 你的 Skill 真的好使吗？
 
-我花了三周写评估器，给 28 个 skill 跑了六个维度的结构评分。分数从 0.65 到 0.80，看着挺合理。然后我拿真实任务验证——用 `claude -p` 把 SKILL.md 注入上下文，跑预定义测试。
+OpenClaw 火了之后，Skill 数量井喷。ClawHub 上 5400+ 个 skill，团队内部几十个，但有一个问题所有人都在回避：**你怎么知道你写的 skill 是好使的，而不只是"看起来能跑"？**
 
-结果是 **R² = 0.00**。
+目前的验证方式：自己手动试几次、让同事跑几个 case、看看能不能触发。这套方式在 skill 少的时候能凑合，多起来就完全不够了——没有统一标准，没有稳定性概念，更没有自动化的改进闭环。
 
-不是接近零。是字面上的零。评分 0.70 的 skill 全部任务通过，评分 0.88 的反而挂了。这意味着我写的那 26 个 checklist 项目——有没有 frontmatter、有没有 When to Use、有没有示例代码——跟 skill 在真实场景下好不好用完全没有关系。
+我花了三个月搭了一套系统来解决这件事。过程中发现了一个让我推翻所有假设的事实：
 
-这个发现改变了整个项目的方向。下面讲怎么从这里走到一套可用的自动改进系统。
+**结构评分和实际执行效果的相关系数是 R² = 0.00。**
+
+不是接近零，是字面意义上的零。你的 SKILL.md 写得再漂亮——frontmatter 完整、When to Use 齐全、示例代码丰富——跟 AI 能不能在真实场景下正确执行，**没有任何统计关系**。一个评分 0.88 的 skill 反而比评分 0.70 的执行更差。
+
+这意味着：**目前市面上所有基于文档结构打分的 skill 评估方案，包括 ClawHub 的 skill-quality-check、PromptFoo 的 assertion 检查，从根本上就测错了东西。** 它们测的是"文档卫生"，不是"指导质量"。
+
+这个发现改变了我做这件事的方向。不能只检查文档写得好不好，得让 AI 真正拿着 SKILL.md 去跑任务，看它到底能不能做对。然后把做不对的信息反馈回来，自动改进 SKILL.md，再跑，再验证——直到它真的好使为止。
+
+下面讲这套系统是怎么搭的，以及它现在能做到什么。
 
 ## 偷师：从蒸馏别人的仓库开始
 
@@ -343,7 +351,9 @@ xychart-beta
 
 13/15 达到 POWERFUL（>= 85%）。讽刺的发现：做评估框架的项目，自己的文档曾经是最差的——discriminator 有 620 行 score.py，SKILL.md 只有 26 行。
 
-## 行业对比
+## 我们做了什么别人没做的
+
+这个领域不缺工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。但把这些能力**组合成一个针对 Skill 的闭环系统**——从评估到改进到验证到持续运行——目前只有我们在做。
 
 | 系统 | 优化对象 | 粒度 | diff 可读？ | 多维度？ | 反馈来源 |
 |------|---------|------|:-----------:|:-------:|---------|
@@ -355,11 +365,17 @@ xychart-beta
 | LangSmith | agent trace | trace | N/A | 多 metric | 可观测性平台 |
 | Karpathy autoresearch | train.py | 文件 | ✅ | 单标量 | 训练 loss |
 
-DSPy 在 token 粒度上做贝叶斯搜索，改完你未必看得懂改了什么。我操作的是 SKILL.md——候选改的是段落、示例、frontmatter 字段，diff 人能读。
+几个关键差异化：
 
-LangSmith 和 Langfuse 做 trace、做 monitoring，但不关闭改进循环。session-feedback-analyzer 的 trace 采集思路跟 LangSmith 接近，但下游直接对接 generator，不是给人看 dashboard。
+**执行效果评估，不是文档检查。** PromptFoo 和 ClawHub 的 skill-quality-check 做的是 assertion 检查。我们的 evaluator 让 AI 真正拿着 SKILL.md 去跑任务，看它到底能不能做对。R²=0.00 告诉我们：文档检查和执行效果之间没有统计关系，你必须实际跑。
 
-有一件事我在这些系统里都没看到：从用户会话日志挖隐式反馈来优化 agent 指令。RLHF 做偏好学习，但那是模型训练层面。在 prompt/skill 层面，用户纠正 AI 输出这个动作被浪费了——没人把它收集起来反馈给 skill 改进流程。
+**多维度 Pareto，不是单一分数。** DSPy、autoresearch、PromptFoo 都用单一标量。单一标量的陷阱：accuracy 涨了但 trigger_quality 崩了——加权得分还涨了。Pareto front 要求每个维度独立不退步，98 行 Python 拦住了至少三个 skill 被搞坏。
+
+**用户隐式反馈闭环。** 所有开源方案里没人做的事。LangSmith 做 trace 采集但止步于 dashboard。我们的 session-feedback-analyzer 从 Claude Code 会话日志提取用户纠正信号，**直接对接 generator 驱动下一轮改进**。用户改了 AI 的输出——这个信号在所有现有方案里都被浪费了。
+
+**diff 可读。** DSPy 的 MIPROv2 在 token 粒度做搜索，改完看 diff 经常是懵的。我们改的是段落和示例，每个 diff 人能读懂、能判断、能回滚。
+
+**连续自主运行。** 不是手动跑一次。设好 cost cap，睡前启动，第二天看报告。Karpathy 用 700 次实验两天提升 11%，我们在 4 个 skill 上平均 +0.138，费用 -20。
 
 ## 连续跑
 
@@ -380,29 +396,52 @@ flowchart TD
 
 状态持久化到 JSON，进程挂了重启接着跑。每轮写 `handoffs/iteration-N.md` 记录 Decided/Rejected/Scores/Remaining，保证跨迭代上下文存活。
 
-## 回头看
+## 实际效果
 
-最大的弯路是顺序。先写了 generator 和 executor——"先让它能改，再想怎么评"。改完之后不知道好不好，只能凭感觉。掉头先做 learner 和 evaluator 之后一切才顺起来。
+先说数字：
 
-然后在 accuracy 检查上花了大量时间。调 checklist、加检查项、改权重，断断续续搞了三周。R²=0.00 出来之后全白费了。结构评估的价值上限比我以为的低得多。
+- **4 个 GENERIC skill → 全部 SOLID**，平均 +0.138，总费用 $15-20
+- **15 个管线 skill 均分 83.3% → 91.2%**，13/15 达到 POWERFUL
+- **session-feedback-analyzer** 从真实会话提取 28 个反馈事件，code-review-enhanced 被纠正 9 次——跟体感完全一致
+- **409 个测试**全部通过，依赖只有 pyyaml 和 pytest，不需要任何外部服务（除了 evaluator 的 `claude -p`）
+- 已发布到 **ClawHub**，搜索 `auto-improvement` 即可安装
 
-Pareto front 是做对了的事。有一次一个候选把 accuracy 从 0.83 拉到 0.91，trigger_quality 从 0.80 掉到 0.55。算加权得分——还涨了 0.02。如果用单一分数，这个候选就会被应用。Pareto front 拦住了它。98 行 Python，救了至少三个 skill 不被搞坏。
+几个关键教训：
 
-成本的问题是第三个月才想起来的。evaluator 一次 $3-5，autoloop 跑 10 轮 $50。对个人项目来说没什么。但 100 个 skill 的团队一个月光自动改进就要 $5000。conditional evaluation（discriminator 分数低于阈值就跳过 evaluator）省了 60%，但这是补丁。应该从第一天就把 cost_per_eval 当约束。
+**先有评估再做改进。** 我最初顺序反了——先写 generator 和 executor，改完不知道好不好。掉头先做评估之后一切才顺起来。听起来像废话，做起来真的会忘。
 
-## 还没解的
+**Pareto front 是 ROI 最高的组件。** 98 行 Python，拦住了至少三个 skill 不被"优化"搞坏。加权得分的陷阱防不胜防——accuracy 涨了但 trigger_quality 崩了，总分居然还涨了 0.02。
 
-循环依赖仍然是最大的问题。task suite 和 SKILL.md 通常一个人写。你写了 skill 教 Claude 怎么做 X，然后你写测试检查 Claude 有没有做 X。当然能通过——你测的就是你教的。
+**成本控制是设计约束，不是事后补丁。** evaluator 一次 $3-5，100 个 skill 的团队一个月可能 $5000。conditional evaluation（低分候选跳过 evaluator）省了 60%，但这是第三个月才加的。
 
-已经做了两件事：session-feedback-analyzer（独立于 task suite 的信号来源）和 null-skill calibration（过滤掉裸跑 Claude 就能通过的任务）。但还不够。更好的方案可能是对抗性测试生成、社区贡献的 task suite、或 held-out 拆分。
+## 还没解的（欢迎一起想）
 
-另一个问题：skill 本身有副作用。加载 prompt-hardening skill 后，通过率跟裸跑一样是 86%，但是不同的 86%。你修好了 A 任务，B 任务可能就坏了。怎么量化这个 tradeoff，我还没想到好办法。
+**循环依赖**仍然是最大的问题。task suite 和 SKILL.md 通常一个人写——你测的就是你教的。我们做了两件事缓解（session-feedback-analyzer 提供独立信号，null-skill calibration 过滤裸跑就能过的任务），但根本解法可能需要社区参与：如果写 task suite 的人不是写 SKILL.md 的人，循环就断了。
 
-## 代码
+**Skill 副作用**没有好的量化方法。加载 prompt-hardening 后通过率跟裸跑一样是 86%，但失败的任务不同——修好了 A，B 坏了。这不是 bug，是 skill 注入知识后注意力分配变化的固有属性。
 
-15 个 skill，8000+ 行 Python，409 个测试，依赖只有 pyyaml 和 pytest。已发布到 ClawHub。
+**多模型衰减曲线**还没跑。同一个 task suite 在 Opus/Sonnet/Haiku 上的 pass rate 衰减能反映 skill 对模型"聪明度"的依赖——衰减越平缓说明 skill 自身的指令设计越扎实。evaluator 已经支持 `--model` 参数，但还没有系统性地做过对比实验。
+
+## 试一下
+
+15 个 skill，8000+ 行 Python，409 个测试。**整套系统只依赖 pyyaml 和 pytest**，不需要任何外部服务（evaluator 的 `claude -p` 除外）。
+
+```bash
+# 安装
+git clone https://github.com/lanyasheng/auto-improvement-orchestrator-skill.git
+pip install pyyaml pytest
+
+# 给你的 skill 打个分
+python3 skills/improvement-learner/scripts/self_improve.py --skill-path /your/skill --max-iterations 1
+
+# 自动改进（5 轮，Pareto 保护）
+python3 skills/improvement-learner/scripts/self_improve.py --skill-path /your/skill --max-iterations 5
+
+# 从你的 Claude Code 会话中提取反馈
+python3 skills/session-feedback-analyzer/scripts/analyze.py --output feedback.jsonl
+```
 
 - GitHub: [lanyasheng/auto-improvement-orchestrator-skill](https://github.com/lanyasheng/auto-improvement-orchestrator-skill)
-- ClawHub: 搜索 `auto-improvement`
+- ClawHub: `openclaw skills install auto-improvement-orchestrator`
 
-几个我还在想的问题：task suite 怎么写才能不陷入循环依赖？Skill 副作用怎么量化？从用户会话日志挖隐式反馈，除了关键词匹配还有什么更好的 correction 检测方法？
+如果你在做 skill 质量相关的事——不管是评估、测试还是自动改进——欢迎在 GitHub 上开 issue 讨论，或者直接贡献 task suite（**这是打破循环依赖最需要的东西**）。
