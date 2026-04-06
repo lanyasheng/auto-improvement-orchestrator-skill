@@ -423,9 +423,9 @@ xychart-beta
 
 13/15 达到 POWERFUL（>= 85%）。讽刺的发现：做评估框架的项目，自己的文档曾经是最差的——discriminator 有 620 行 score.py，SKILL.md 只有 26 行。
 
-## 我们做了什么别人没做的
+## 和现有方案的定位区别
 
-这个领域不缺工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。但把这些能力**组合成一个针对 Skill 的闭环系统**——从评估到改进到验证到持续运行——目前只有我们在做。
+这个领域有不少好工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。我们的系统大量借鉴了它们的设计思路，但尝试在一个它们没有重点覆盖的层面上做整合——**把评估、改进、验证组合成一个针对 Skill 的闭环**。
 
 | 系统 | 优化对象 | 粒度 | diff 可读？ | 多维度？ | 反馈来源 |
 |------|---------|------|:-----------:|:-------:|---------|
@@ -443,7 +443,7 @@ xychart-beta
 
 **多维度 Pareto，不是单一分数。** DSPy、autoresearch、PromptFoo 都用单一标量。单一标量的陷阱：accuracy 涨了但 trigger_quality 崩了——加权得分还涨了。Pareto front 要求每个维度独立不退步，98 行 Python 拦住了至少三个 skill 被搞坏。
 
-**用户隐式反馈闭环。** 所有开源方案里没人做的事。LangSmith 做 trace 采集但止步于 dashboard。我们的 session-feedback-analyzer 从 Claude Code 会话日志提取用户纠正信号，**直接对接 generator 驱动下一轮改进**。用户改了 AI 的输出——这个信号在所有现有方案里都被浪费了。
+**用户隐式反馈闭环。** LangSmith 做 trace 采集但主要输出到 dashboard 供人分析。我们尝试往前走一步：session-feedback-analyzer 从 Claude Code 会话日志提取用户纠正信号，**直接对接 generator 驱动下一轮改进**，跳过人工分析环节。这个思路不算新——RLHF 在模型训练层面做类似的事——但在 prompt/skill 层面的实现我们还没看到太多先例。
 
 **diff 可读。** DSPy 的 MIPROv2 在 token 粒度做搜索，改完看 diff 经常是懵的。我们改的是段落和示例，每个 diff 人能读懂、能判断、能回滚。
 
@@ -486,13 +486,52 @@ flowchart TD
 
 **成本控制是设计约束，不是事后补丁。** evaluator 一次 $3-5，100 个 skill 的团队一个月可能 $5000。conditional evaluation（低分候选跳过 evaluator）省了 60%，但这是后来才补的。
 
-## 还没解的（欢迎一起想）
+## 循环依赖怎么破：GAN 式对抗生成
 
-**循环依赖**仍然是最大的问题。task suite 和 SKILL.md 通常一个人写——你测的就是你教的。我们做了两件事缓解（session-feedback-analyzer 提供独立信号，null-skill calibration 过滤裸跑就能过的任务），但根本解法可能需要社区参与：如果写 task suite 的人不是写 SKILL.md 的人，循环就断了。
+说清楚这个问题到底是什么。
 
-**Skill 副作用**没有好的量化方法。加载 prompt-hardening 后通过率跟裸跑一样是 86%，但失败的任务不同——修好了 A，B 坏了。这不是 bug，是 skill 注入知识后注意力分配变化的固有属性。
+传统做法：一个人写 SKILL.md，同一个人写 task suite 来测试。问题是——你写的测试自然会覆盖你写的内容。skill-creator 的 accuracy 评分 0.70（最低），但 evaluator pass rate 100%（最高）。不是它真的好，是 task suite 恰好只测了它教的东西。这像考试出题人自己做自己的卷子。
 
-**多模型衰减曲线**还没跑。同一个 task suite 在 Opus/Sonnet/Haiku 上的 pass rate 衰减能反映 skill 对模型"聪明度"的依赖——衰减越平缓说明 skill 自身的指令设计越扎实。evaluator 已经支持 `--model` 参数，但还没有系统性地做过对比实验。
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+<div style="display:flex;gap:16px">
+<div style="flex:1;border-radius:12px;padding:20px;background:#fef2f2;border:1px solid #fca5a5">
+<div style="font-size:12px;font-weight:700;color:#dc2626;letter-spacing:1px;margin-bottom:14px">❌ 传统方式：自己出题自己考</div>
+<div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:8px"><b>作者写 SKILL.md</b><br/><span style="color:#666">"当需要生成 release notes 时，按模块分类"</span></div>
+<div style="text-align:center;color:#999;margin:4px 0">↓ 同一个人</div>
+<div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:12px;margin-bottom:8px"><b>作者写 task_suite.yaml</b><br/><span style="color:#666">"测试：能不能按模块分类？" → 当然能</span></div>
+<div style="text-align:center;color:#999;margin:4px 0">↓</div>
+<div style="background:#fef2f2;border:1px solid #f87171;border-radius:8px;padding:12px"><b style="color:#dc2626">100% 通过 ≠ 真的好</b><br/><span style="color:#666">只是自洽，没覆盖作者没想到的场景</span></div>
+</div>
+
+<div style="flex:1;border-radius:12px;padding:20px;background:#f0fdf4;border:1px solid #86efac">
+<div style="font-size:12px;font-weight:700;color:#16a34a;letter-spacing:1px;margin-bottom:14px">✅ GAN 式：生成器 vs 对抗测试器</div>
+<div style="background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:12px;margin-bottom:8px"><b>Generator 改进 SKILL.md</b><br/><span style="color:#666">优化段落、补示例、加 guardrails</span></div>
+<div style="text-align:center;color:#999;margin:4px 0">↓ 不同角色</div>
+<div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:12px;margin-bottom:8px"><b style="color:#a16207">Adversarial Tester 造对抗测试</b><br/><span style="color:#666">"找一个能让这个 skill 失败的输入"<br/>不看 task suite，只看 SKILL.md 找弱点</span></div>
+<div style="text-align:center;color:#999;margin:4px 0">↓</div>
+<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px"><b style="color:#16a34a">通过对抗测试 = 真的强</b><br/><span style="color:#666">因为测试者的目标就是让你失败</span></div>
+</div>
+</div>
+</div>
+
+思路来自 GAN 的对抗训练——generator 和 discriminator 互相博弈，一个负责改进，一个负责找漏洞。在 skill 场景下：
+
+- **Generator**（已有）：读 SKILL.md，生成改进候选
+- **Adversarial Tester**（新角色）：读 SKILL.md，专门找它**没覆盖的边界情况**，生成能让 skill 失败的测试用例
+- **Evaluator**（已有）：跑这些对抗测试，看 skill 能不能扛住
+
+这不需要"社区参与"或"不同的人来写"——只需要用不同 prompt 角色来分离关注点。Generator 的目标是"让 skill 更好"，Adversarial Tester 的目标是"让 skill 失败"。两个角色用同一个 LLM，但 prompt 不同、激励方向相反。
+
+我们已经做了三件事来缓解循环依赖：
+1. **session-feedback-analyzer**：从用户实际使用中挖独立信号
+2. **null-skill calibration**：过滤裸跑 Claude 就能通过的任务
+3. **GAN 式对抗测试生成**：让 adversarial tester 专门找 skill 的弱点
+
+## 还在想的
+
+**Skill 副作用量化。** 加载 prompt-hardening 后通过率跟裸跑一样是 86%，但失败的任务不同——修好了 A，B 坏了。这是 skill 注入知识后注意力分配变化的固有属性，不是 bug。需要逐任务跟踪 pass/fail 在 skill 版本间的变化。
+
+**多模型衰减曲线。** 同一个 task suite 在 Opus/Sonnet/Haiku 上的 pass rate 衰减能反映 skill 对模型"聪明度"的依赖——衰减越平缓说明 skill 自身的指令设计越扎实。evaluator 已经支持 `--model` 参数，还没做系统性对比。
 
 ## 试一下
 
