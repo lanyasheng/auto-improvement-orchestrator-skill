@@ -376,7 +376,7 @@ def _heuristic_score_with_config(candidate: dict, config: ReviewerConfig) -> tup
     source_refs = candidate.get("source_refs", []) or []
     executor_support = bool(candidate.get("executor_support"))
     base = 2.0
-    category_bonus = 0.0  # category gating handled by build_recommendation
+    category_bonus = config.category_weights.get(category, 0.0)
     source_signal = min(len(source_refs), 3) * 0.5
     support_bonus = 0.5 if executor_support else 0.0
     protected_penalty = 2.5 if protected_target(candidate.get("target_path", "")) else 0.0

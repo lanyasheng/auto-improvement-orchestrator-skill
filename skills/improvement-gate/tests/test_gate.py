@@ -188,7 +188,7 @@ class TestRegressionGate:
     def test_no_evidence(self):
         result = RegressionGate().validate(_full_candidate())
         assert result["passed"] is True
-        assert "No evaluator" in result["details"]
+        assert "No regression" in result["details"]
 
     def test_evidence_disabled(self):
         candidate = _full_candidate(evaluator_evidence={"enabled": False})

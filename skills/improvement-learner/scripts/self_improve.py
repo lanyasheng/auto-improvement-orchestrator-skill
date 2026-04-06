@@ -366,6 +366,12 @@ def _extract_description_text(fm_section: str) -> str:
     return desc_text.strip()
 
 
+def _extract_category(skill_md_content: str) -> str:
+    """Extract category from SKILL.md frontmatter. Returns 'tool' as default."""
+    m = re.search(r'^category:\s*(\S+)', skill_md_content, re.MULTILINE)
+    return m.group(1).strip().lower() if m else "tool"
+
+
 # ---------------------------------------------------------------------------
 # Skill evaluation — real, not random
 # ---------------------------------------------------------------------------
@@ -400,32 +406,56 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
     if has_skill_md:
         skill_md_content = (skill_path / "SKILL.md").read_text(encoding="utf-8")
 
-    # Coverage: SKILL.md is the only hard requirement.
+    # Coverage: does SKILL.md cover what it should? (content quality, not project artifacts)
     if not has_skill_md:
         scores["coverage"] = 0.0
     else:
         content = skill_md_content
+        content_lower = content.lower()
         lines = len(content.split("\n"))
-        base = 0.4  # SKILL.md exists = 40% base
-        bonus = 0.0
-        bonus_items = 0
-        # Optional structure bonuses
-        if has_scripts:
-            bonus += 0.1; bonus_items += 1
+        cov_checks: list[bool] = []
+        # 1. Has When to Use / When NOT to Use
+        cov_checks.append("when to use" in content_lower or "when to" in content_lower
+                          or "## 使用场景" in content or "## 适用" in content)
+        # 2. Has example or anti-example
+        cov_checks.append("<example>" in content or "<anti-example>" in content
+                          or "## Example" in content or "## 示例" in content)
+        # 3. Has Output / output artifacts section
+        cov_checks.append("## Output" in content or "## output" in content_lower
+                          or "## 输出" in content)
+        # 4. Has Related / See Also for disambiguation
+        cov_checks.append("## Related" in content or "## See Also" in content
+                          or "## 关联" in content or "## 相关" in content)
+        # 5. Has Usage / workflow section
+        cov_checks.append("## Usage" in content or "## Workflow" in content
+                          or "## 用法" in content or "## 工作流" in content)
+        # 6. Progressive disclosure: >500 lines should have references/
+        if lines > 500:
+            cov_checks.append(has_references)
+        else:
+            cov_checks.append(True)  # not applicable, pass
+        scores["coverage"] = sum(cov_checks) / len(cov_checks)
+
+    # Completeness: project artifact completeness, category-aware.
+    # tool/orchestration skills need scripts+tests; knowledge/rule skills don't.
+    category = _extract_category(skill_md_content) if has_skill_md else "tool"
+    comp_checks: list[bool] = []
+    if category in ("tool", "orchestration"):
+        comp_checks.append(has_scripts)       # scripts/ expected
+        comp_checks.append(has_tests)         # tests/ expected
+        comp_checks.append(has_references)    # references/ nice to have
+        comp_checks.append(has_readme)        # README nice to have
+    else:  # knowledge, rule, or unset
+        # Pure-instruction skills: no scripts/tests required
+        comp_checks.append(has_references)    # references/ expected for depth
         if has_references:
-            bonus += 0.1; bonus_items += 1
-        if has_tests:
-            bonus += 0.1; bonus_items += 1
-        if has_readme:
-            bonus += 0.1; bonus_items += 1
-        if "<example>" in content or "<anti-example>" in content:
-            bonus += 0.1; bonus_items += 1
-        if "## Output" in content or "## output" in content.lower():
-            bonus += 0.1; bonus_items += 1
-        scores["coverage"] = min(1.0, base + bonus)
-        # Penalty: SKILL.md > 500 lines without references/ (progressive disclosure)
-        if lines > 500 and not has_references:
-            scores["coverage"] = max(0.3, scores["coverage"] - 0.2)
+            ref_files = list(skill_path.rglob("references/**/*.md"))
+            comp_checks.append(len(ref_files) >= 2)  # at least 2 reference files
+        else:
+            comp_checks.append(False)
+        comp_checks.append("<example>" in skill_md_content or "<anti-example>" in skill_md_content)
+        comp_checks.append(len(skill_md_content.split("\n")) >= 50)  # non-trivial length
+    scores["completeness"] = sum(comp_checks) / len(comp_checks) if comp_checks else 0.0
 
     # Accuracy: Two-tier scoring.
     #
@@ -659,27 +689,27 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
 ROLE_WEIGHTS: dict[str, dict[str, float]] = {
     "user": {
         # User cares: can I find this skill? can I use it quickly?
-        "accuracy": 0.15, "coverage": 0.10, "reliability": 0.10,
-        "efficiency": 0.10, "security": 0.05, "trigger_quality": 0.35,
-        "leakage": 0.05, "knowledge_density": 0.10,
+        "accuracy": 0.15, "coverage": 0.10, "completeness": 0.05,
+        "reliability": 0.05, "efficiency": 0.10, "security": 0.05,
+        "trigger_quality": 0.35, "leakage": 0.05, "knowledge_density": 0.10,
     },
     "developer": {
         # Developer cares: is the code solid? are there tests?
-        "accuracy": 0.10, "coverage": 0.15, "reliability": 0.25,
-        "efficiency": 0.10, "security": 0.10, "trigger_quality": 0.05,
-        "leakage": 0.10, "knowledge_density": 0.15,
+        "accuracy": 0.10, "coverage": 0.10, "completeness": 0.15,
+        "reliability": 0.20, "efficiency": 0.10, "security": 0.10,
+        "trigger_quality": 0.05, "leakage": 0.05, "knowledge_density": 0.15,
     },
     "security_auditor": {
         # Security auditor cares: secrets? dangerous patterns? license?
-        "accuracy": 0.10, "coverage": 0.05, "reliability": 0.10,
-        "efficiency": 0.05, "security": 0.40, "trigger_quality": 0.05,
-        "leakage": 0.20, "knowledge_density": 0.05,
+        "accuracy": 0.10, "coverage": 0.05, "completeness": 0.05,
+        "reliability": 0.10, "efficiency": 0.05, "security": 0.35,
+        "trigger_quality": 0.05, "leakage": 0.20, "knowledge_density": 0.05,
     },
     "architect": {
         # Architect cares: structure? progressive disclosure? depth?
-        "accuracy": 0.20, "coverage": 0.15, "reliability": 0.05,
-        "efficiency": 0.15, "security": 0.05, "trigger_quality": 0.05,
-        "leakage": 0.10, "knowledge_density": 0.25,
+        "accuracy": 0.15, "coverage": 0.15, "completeness": 0.10,
+        "reliability": 0.05, "efficiency": 0.10, "security": 0.05,
+        "trigger_quality": 0.05, "leakage": 0.10, "knowledge_density": 0.25,
     },
 }
 
@@ -690,18 +720,56 @@ ROLE_LABELS = {
     "architect": "Architect (structure + design)",
 }
 
+# Category-specific weight modifiers: >1.0 amplifies, <1.0 dampens, 1.0 = no change.
+# Applied multiplicatively to ROLE_WEIGHTS, then re-normalized.
+CATEGORY_MODIFIERS: dict[str, dict[str, float]] = {
+    "tool": {"reliability": 1.5, "completeness": 1.3, "security": 1.2, "trigger_quality": 0.8},
+    "knowledge": {"accuracy": 1.5, "knowledge_density": 1.3, "completeness": 0.6, "reliability": 0.7},
+    "orchestration": {"reliability": 1.3, "coverage": 1.2, "completeness": 1.2, "trigger_quality": 0.8},
+    "rule": {"accuracy": 1.4, "security": 1.3, "completeness": 0.6, "coverage": 0.8},
+}
+
 
 def evaluate_skill_multi_role(skill_path: Path) -> dict[str, Any]:
     """Evaluate a skill from 4 different role perspectives.
 
-    Returns a dict with per-role scores, consensus label, and overall.
+    Returns a dict with per-role scores, consensus label, overall, and category.
     Uses the same base dimensions from evaluate_skill_dimensions()
-    but applies role-specific weights.
+    but applies role-specific weights modified by category-aware multipliers.
+
+    Category modifiers (from CATEGORY_MODIFIERS) are applied multiplicatively
+    to each role's base weights, then the weights are re-normalized to sum to 1.0.
+    This makes tool-type skills emphasize reliability/security and knowledge-type
+    skills emphasize accuracy/knowledge_density.
     """
+    skill_path = Path(skill_path)
     base_scores = evaluate_skill_dimensions(skill_path)
+
+    # Read category from SKILL.md frontmatter
+    skill_md = skill_path / "SKILL.md"
+    if skill_md.exists():
+        skill_md_content = skill_md.read_text(encoding="utf-8")
+        category = _extract_category(skill_md_content)
+    else:
+        category = "tool"
+
+    cat_modifiers = CATEGORY_MODIFIERS.get(category, {})
+
     role_results: dict[str, dict[str, Any]] = {}
 
-    for role, weights in ROLE_WEIGHTS.items():
+    for role, base_weights in ROLE_WEIGHTS.items():
+        # Apply category modifiers: multiply each dimension weight, then re-normalize
+        adjusted: dict[str, float] = {}
+        for dim, w in base_weights.items():
+            adjusted[dim] = w * cat_modifiers.get(dim, 1.0)
+
+        # Re-normalize so weights sum to 1.0
+        total = sum(adjusted.values())
+        if total > 0:
+            weights = {dim: v / total for dim, v in adjusted.items()}
+        else:
+            weights = adjusted
+
         weighted = sum(base_scores.get(dim, 0) * w for dim, w in weights.items())
         pct = round(weighted * 100, 1)
         if pct >= 85:
@@ -733,6 +801,7 @@ def evaluate_skill_multi_role(skill_path: Path) -> dict[str, Any]:
     avg = round(sum(r["score"] for r in role_results.values()) / len(role_results), 1)
 
     return {
+        "category": category,
         "base_scores": {k: round(v, 3) for k, v in base_scores.items()},
         "role_scores": role_results,
         "consensus": consensus,

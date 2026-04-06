@@ -30,7 +30,7 @@ from lib.state_machine import (
 
 
 def capture_execution_trace(candidate: dict, result: dict, error: str | None = None) -> dict:
-    """Capture structured execution trace for GEPA feedback."""
+    """Capture structured execution trace for failure feedback."""
     return {
         "type": "execution_trace",
         "candidate_id": candidate.get("id", "unknown"),

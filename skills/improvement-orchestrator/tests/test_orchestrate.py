@@ -409,11 +409,12 @@ class TestRunPipeline:
             )
 
         assert summary["final_decision"] == "no_accepted_candidates"
-        assert summary["attempts"] == 1
+        # Pipeline retries up to max_retries before giving up
+        assert summary["attempts"] == 3
 
     def test_failure_trace_fed_back_as_source(self, tmp_state):
-        """Verify that after a revert the trace path is added to sources."""
-        call_log = {"proposer_sources": []}
+        """Verify that after a revert the trace path is passed via --trace."""
+        call_log = {"proposer_calls": []}
 
         original_side_effect = _mock_subprocess_side_effects(
             tmp_state, ["revert", "keep"],
@@ -422,12 +423,18 @@ class TestRunPipeline:
         def tracking_side_effect(cmd, **kwargs):
             script_name = cmd[1] if len(cmd) > 1 else ""
             if "propose.py" in script_name:
-                # Capture --source args
+                # Capture --source and --trace args
                 sources_in_cmd = []
+                trace_in_cmd = None
                 for i, arg in enumerate(cmd):
                     if arg == "--source" and i + 1 < len(cmd):
                         sources_in_cmd.append(cmd[i + 1])
-                call_log["proposer_sources"].append(sources_in_cmd)
+                    if arg == "--trace" and i + 1 < len(cmd):
+                        trace_in_cmd = cmd[i + 1]
+                call_log["proposer_calls"].append({
+                    "sources": sources_in_cmd,
+                    "trace": trace_in_cmd,
+                })
             return original_side_effect(cmd, **kwargs)
 
         with self._no_evaluator, patch("subprocess.run", side_effect=tracking_side_effect):
@@ -438,14 +445,15 @@ class TestRunPipeline:
                 max_retries=3,
             )
 
-        # First call: only original source
-        assert call_log["proposer_sources"][0] == ["/original/source.md"]
+        # First call: only original source, no trace
+        assert call_log["proposer_calls"][0]["sources"] == ["/original/source.md"]
+        assert call_log["proposer_calls"][0]["trace"] is None
 
-        # Second call: original source + trace
-        second_sources = call_log["proposer_sources"][1]
-        assert len(second_sources) == 2
-        assert second_sources[0] == "/original/source.md"
-        assert "trace-" in second_sources[1]
+        # Second call: same source, plus a --trace pointing to trace file
+        second_call = call_log["proposer_calls"][1]
+        assert second_call["sources"] == ["/original/source.md"]
+        assert second_call["trace"] is not None
+        assert "trace-" in second_call["trace"]
 
 
 # ---------------------------------------------------------------------------

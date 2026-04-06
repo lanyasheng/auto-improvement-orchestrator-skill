@@ -92,6 +92,31 @@ def _run_script(cmd: list[str], label: str) -> str:
     return result.stdout.strip()
 
 
+def run_script(script: Path, args: list[str], label: str) -> Path:
+    """Run a script with args and return the artifact path as a Path.
+
+    Higher-level wrapper around subprocess that:
+    - Raises RuntimeError (with stderr) on non-zero exit.
+    - Raises RuntimeError when stdout is blank.
+    - Returns the last non-blank line of stdout as a resolved Path.
+    """
+    cmd = [sys.executable, str(script)] + args
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{label} failed (exit {result.returncode}):\n"
+            f"  stdout: {result.stdout.strip()}\n"
+            f"  stderr: {result.stderr.strip()}"
+        )
+    stdout = result.stdout.strip()
+    if not stdout:
+        raise RuntimeError(f"{label} produced no output")
+    path = Path(stdout)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
 def run_proposer(
     target: str,
     sources: list[str],

@@ -343,8 +343,8 @@ class TestScoreIntegration:
         )
         result = score_candidate(candidate, llm_judge=judge)
         components = result["score_components"]
-        assert components["heuristic_weight"] == 0.6
-        assert components["llm_weight"] == 0.4
+        assert components["heuristic_weight"] == 0.3
+        assert components["llm_weight"] == 0.7
 
     def test_adapter_name_with_llm(self):
         judge = LLMJudge()
