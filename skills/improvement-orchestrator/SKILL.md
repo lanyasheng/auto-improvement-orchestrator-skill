@@ -40,7 +40,7 @@ propose → discriminate → evaluate* → execute → gate
 
 <example>
 正确用法: 对一个 skill 运行全流程改进
-$ python3 scripts/orchestrate.py --target /path/to/skill --state-root ~/.openclaw/shared-context/intel/auto-improvement/state
+$ python3 scripts/orchestrate.py --target /path/to/skill --state-root ./state
 → 自动完成: 生成候选 → 多人盲审 → 任务评估 → 执行变更 → 6层门禁
 → 失败时自动注入 trace 重试（最多 3 次）
 </example>

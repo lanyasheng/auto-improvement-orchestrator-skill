@@ -59,8 +59,8 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 python3 skills/improvement-learner/scripts/self_improve.py \
   --skill-path /path/to/your/skill \
   --max-iterations 5 \
-  --memory-dir ~/.openclaw/shared-context/intel/auto-improvement/memory \
-  --state-root ~/.openclaw/shared-context/intel/auto-improvement/state
+  --memory-dir ./state/memory \
+  --state-root ./state
 ```
 
 ### Run full pipeline
@@ -68,7 +68,7 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 ```bash
 python3 skills/improvement-orchestrator/scripts/orchestrate.py \
   --target /path/to/skill \
-  --state-root ~/.openclaw/shared-context/intel/auto-improvement/state \
+  --state-root ./state \
   --max-retries 3
 ```
 
@@ -77,7 +77,7 @@ python3 skills/improvement-orchestrator/scripts/orchestrate.py \
 ```bash
 python3 skills/improvement-evaluator/scripts/evaluate.py \
   --task-suite /path/to/task_suite.yaml \
-  --state-root ~/.openclaw/shared-context/intel/auto-improvement/eval \
+  --state-root ./state/eval \
   --standalone --mock  # remove --mock for real claude -p
 ```
 
