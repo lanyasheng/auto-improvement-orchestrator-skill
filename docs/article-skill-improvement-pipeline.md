@@ -5,9 +5,9 @@
 
 ## 起因：改了 Skill 之后不知道是变好了还是变差了
 
-OpenClaw 生态的 Skill 数量已经上万（VoltAgent 精选集筛选后 5000+），团队内部也有几十个。写 Skill 不难，难的是改完之后判断效果——你加了一段 guardrail，到底是提升了安全性还是干扰了正常输出？你补了一个 example，到底是帮到了 AI 还是占了上下文预算？
+OpenClaw 生态的 Skill 数量已经上万（VoltAgent 精选集筛选后 5000+），团队内部也有几十个。写 Skill 不难，难的是改完之后判断效果。你加了一段 guardrail，到底是提升了安全性还是干扰了正常输出？你补了一个 example，到底是帮到了 AI 还是占了上下文预算？
 
-目前的做法：手动试几次、让同事跑几个 case、凭感觉觉得"还行"。Skill 少的时候能凑合，规模上来之后就不够了——没有统一标准，没有稳定性度量，更没有自动化的改进闭环。
+目前的做法：手动试几次、让同事跑几个 case、凭感觉觉得"还行"。Skill 少的时候能凑合，规模上来之后就不够了。没有统一标准，没有稳定性度量，更没有自动化的改进闭环。
 
 我搭了一套系统来解决这件事。过程中发现了一个推翻所有假设的事实：
 
@@ -17,7 +17,7 @@ OpenClaw 生态的 Skill 数量已经上万（VoltAgent 精选集筛选后 5000+
 
 这意味着：**目前市面上所有基于文档结构打分的 skill 评估方案，包括 ClawHub 的 skill-quality-check、PromptFoo 的 assertion 检查，从根本上就测错了东西。** 它们测的是"文档卫生"，不是"指导质量"。
 
-这个发现改变了我做这件事的方向。不能只检查文档写得好不好，得让 AI 真正拿着 SKILL.md 去跑任务，看它到底能不能做对。然后把做不对的信息反馈回来，自动改进 SKILL.md，再跑，再验证——直到它真的好使为止。
+这个发现改变了我做这件事的方向。不能只检查文档写得好不好，得让 AI 真正拿着 SKILL.md 去跑任务，看它到底能不能做对。然后把做不对的信息反馈回来，自动改进 SKILL.md，再跑，再验证，直到它真的好使为止。
 
 下面讲这套系统是怎么搭的，以及它现在能做到什么。
 
@@ -25,11 +25,11 @@ OpenClaw 生态的 Skill 数量已经上万（VoltAgent 精选集筛选后 5000+
 
 Claude Code 的 Skill 就是一个 SKILL.md 文件加几个脚本，告诉 AI 遇到特定任务该怎么干。GitHub 上有人整理了不错的合集：alirezarezvani/claude-skills 有 10 个质量模式，affaan-m/everything-claude-code 搞了 116 个 skill 的架构。我不想从零写，想拿来改改用。
 
-手动抄一两个没问题。但 skill 一多——我陆续看中了三四十个——一个个搬就烦了。我写了个 skill-distill 工具，喂进去 N 个功能有重叠的 skill，它把知识分成交集、独有、冲突、冗余四类，让你确认合并方案，然后吐出一个蒸馏版。
+手动抄一两个没问题。但 skill 一多（我陆续看中了三四十个），一个个搬就烦了。我写了个 skill-distill 工具，喂进去 N 个功能有重叠的 skill，它把知识分成交集、独有、冲突、冗余四类，让你确认合并方案，然后吐出一个蒸馏版。
 
 ### 蒸馏案例：deslop（反 AI 味写作）
 
-GitHub 上有两个相关 skill——slopbuster（280 行，英文为主，覆盖学术/代码/散文三种模式）和 humanizer（559 行，偏通用文本去 AI 痕迹）。两个 skill 有大量重叠：都列了 AI 高频词表，都有评分量表，都做模式替换。但 slopbuster 有代码注释专用模式，humanizer 有更细的语气校准。
+GitHub 上有两个相关 skill：slopbuster（280 行，英文为主，覆盖学术/代码/散文三种模式）和 humanizer（559 行，偏通用文本去 AI 痕迹）。两个 skill 有大量重叠：都列了 AI 高频词表，都有评分量表，都做模式替换。但 slopbuster 有代码注释专用模式，humanizer 有更细的语气校准。
 
 ```mermaid
 graph LR
@@ -42,13 +42,13 @@ graph LR
     style E fill:#9f9,stroke:#333
 ```
 
-交集部分（AI 词汇表、评分标准）合并去重。slopbuster 独有的代码模式保留为"不适用场景"指向原 skill。humanizer 独有的 voice calibration 保留进 references。冲突的地方——比如两个 skill 对 em dash 的容忍度不同——弹出来让我手动选。
+交集部分（AI 词汇表、评分标准）合并去重。slopbuster 独有的代码模式保留为"不适用场景"指向原 skill。humanizer 独有的 voice calibration 保留进 references。冲突的地方，比如两个 skill 对 em dash 的容忍度不同，弹出来让我手动选。
 
 蒸馏完的 deslop 比任何一个源 skill 都好用。这篇文章本身就是用 deslop 从 7.5 分改到 8.4 分的。
 
 ### 蒸馏案例：execution-harness（agent 全链路执行可靠性）
 
-这个 skill 解决的不只是"agent 不要半路停"——它覆盖了 dispatched agent 执行的**整个生命周期**：启动前的状态初始化、执行中的持续运转和 context 存活、异常时的错误升级和恢复、结束后的状态清理和记忆合并。
+这个 skill 解决的不只是"agent 不要半路停"。它覆盖了 dispatched agent 执行的**整个生命周期**：启动前的状态初始化、执行中的持续运转和 context 存活、异常时的错误升级和恢复、结束后的状态清理和记忆合并。
 
 来源比 deslop 杂得多：
 
@@ -58,7 +58,7 @@ graph LR
 - **luongnv89/claude-howto**（实践 tips）：贡献了工具错误升级（5 次失败强制换方案）、权限否决追踪（circuit breaker 模式）
 - **ClawHub 社区**：同步参考了 ClawHub 上的 harness-engineer、memory-harness、harness-design-patterns 等社区 skill 的设计思路
 
-此外还蒸馏了 Anthropic 官方的 [harness engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) 文章中的关键模式——特别是 executor/grader 分离、长任务外部记忆、hook bracket 测量。
+此外还蒸馏了 Anthropic 官方的 [harness engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) 文章中的关键模式，特别是 executor/grader 分离、长任务外部记忆、hook bracket 测量。
 
 蒸馏后是 21 个可组合 pattern，覆盖 5 类问题：
 
@@ -70,7 +70,7 @@ graph LR
 | 状态管理 | Atomic Write、Checkpoint Rollback、Stale Session Daemon | crash 丢状态、文件损坏、僵尸进程 |
 | 多 agent 协作 | Delegation Modes、Hook Profiles、Scoped Hooks | 并行调度、hook 粒度控制 |
 
-质量分从 0.63 升到 0.93。OMC 的 Ralph 有个文档里没写的致命细节——**只在 interactive 模式下工作**，headless `-p` 模式的 Stop hook 不触发。这个我在源码里花了两个小时才确认。
+质量分从 0.63 升到 0.93。OMC 的 Ralph 有个文档里没写的致命细节：**只在 interactive 模式下工作**，headless `-p` 模式的 Stop hook 不触发。这个我在源码里花了两个小时才确认。
 
 ## 整体架构：15 个 Skill 组成三层闭环
 
@@ -288,7 +288,7 @@ graph LR
 
 先写了个评分器 improvement-learner，六个维度打分，每个维度按 skill 类别差异化权重：
 
-不同类别的 skill 用不同权重——Tool 类 reliability 权重最高（30%，因为工具必须有测试），Knowledge 类 accuracy 权重最高（40%，因为知识必须准确）：
+不同类别的 skill 用不同权重。Tool 类 reliability 权重最高（30%，因为工具必须有测试），Knowledge 类 accuracy 权重最高（40%，因为知识必须准确）：
 
 | 类别 | accuracy | coverage | reliability | efficiency | security |
 |------|----------|----------|-------------|------------|----------|
@@ -297,7 +297,7 @@ graph LR
 | Orchestration（编排型） | 30% | 20% | **25%** | 10% | 15% |
 | Review（评审型） | **35%** | 15% | 25% | 10% | 15% |
 
-28 个 skill 跑了一遍，零个达到 POWERFUL（>= 85%）。看着挺合理——可以量化了嘛。
+28 个 skill 跑了一遍，零个达到 POWERFUL（>= 85%）。看着挺合理。
 
 然后我做了一件关键的事：拿真实任务验证。
 
@@ -348,7 +348,7 @@ graph LR
 
 成本从 $0（regex）涨到 ~$0.5/eval，但区分度大幅提升。原来 17/26 检查项零方差的问题消失了。
 
-但 R² 还是 0.00。因为问题不在评估方法上——是"文档质量"和"指导质量"本就是两件事。这个认知花了很长时间才接受。
+但 R² 还是 0.00。因为问题不在评估方法上，是"文档质量"和"指导质量"本就是两件事。认知花了很长时间才接受。
 
 ## 两层评估 + 用户反馈闭环
 
@@ -386,7 +386,7 @@ tasks:
 
 ### Skill 到底有没有用？
 
-prompt-hardening skill 的 7 个任务，加载 skill 和裸跑 Claude 的通过率一样——都是 86%。但挂的任务不同：
+prompt-hardening skill 的 7 个任务，加载 skill 和裸跑 Claude 的通过率一样（都是 86%），但挂的任务不同：
 
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
 <div style="display:flex;gap:16px">
@@ -419,7 +419,7 @@ prompt-hardening skill 的 7 个任务，加载 skill 和裸跑 Claude 的通过
 </div>
 </div>
 <div style="margin-top:8px;padding:10px;background:#fefce8;border:1px solid #fde68a;border-radius:8px;font-size:12px">
-<b>通过率一样，但失败的任务不同。</b> Skill 的价值在注入项目特定知识（audit.sh 路径），不是让 Claude 变聪明。但注入知识有代价——注意力分配变了，新的失败模式出现了。这意味着<b>评估不能只看聚合通过率</b>，必须跟踪逐任务的 pass/fail 变化。
+<b>通过率一样，但失败的任务不同。</b> Skill 的价值在注入项目特定知识（audit.sh 路径），不是让 Claude 变聪明。但注入知识有代价，注意力分配变了，新的失败模式出现了。这意味着<b>评估不能只看聚合通过率</b>，必须跟踪逐任务的 pass/fail 变化。
 </div>
 </div>
 
@@ -450,11 +450,11 @@ flowchart TD
 | 部分纠正 | 接受词 + 转折词（"可以但是"） | 0.7 |
 | 静默继续 | 用户换话题，未纠正 | 0.6 |
 
-在我的 session 数据上跑了一遍：28 个反馈事件，code-review-enhanced 被纠正最多（9 次）。这跟我的体感一致——它生成的 review 评论经常需要我手动调整措辞和优先级。
+在我的 session 数据上跑了一遍：28 个反馈事件，code-review-enhanced 被纠正最多（9 次）。这跟我的体感一致，它生成的 review 评论经常需要我手动调整措辞和优先级。
 
 ## 自动改进流水线
 
-直接重试不行。LLM 容易翻来覆去犯同一个错——我们叫它 "Ralph Wiggum loop"，说着 "I'm helping!" 然后帮倒忙。
+直接重试不行。LLM 容易翻来覆去犯同一个错。我们叫它 "Ralph Wiggum loop"，说着 "I'm helping!" 然后帮倒忙。
 
 ```mermaid
 flowchart LR
@@ -553,7 +553,7 @@ def check_regression(self, scores, tolerances=None):
 
 ### Handoff：context 压缩了怎么办
 
-Claude Code 压缩 context 时，设计决策、被否决的方案、已知风险会被丢掉。Handoff 文档解决这个问题——agent 在阶段结束时写 `handoffs/stage-N.md`，包含 Decided/Rejected/Risks/Remaining。文件在磁盘上，不受 context 压缩影响。
+Claude Code 压缩 context 时，设计决策、被否决的方案、已知风险会被丢掉。Handoff 文档解决这个问题：agent 在阶段结束时写 `handoffs/stage-N.md`，包含 Decided/Rejected/Risks/Remaining。文件在磁盘上，不受 context 压缩影响。
 
 ## 实验数据
 
@@ -592,7 +592,7 @@ xychart-beta
 
 ## 和现有方案的定位区别
 
-这个领域有不少好工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。我们的系统大量借鉴了它们的设计思路，但尝试在一个它们没有重点覆盖的层面上做整合——**把评估、改进、验证组合成一个针对 Skill 的闭环**。
+这个领域有不少好工具。DSPy 做 prompt 优化，PromptFoo 做 assertion 检查，LangSmith 做可观测性，Karpathy 的 autoresearch 做单标量自动优化。我们的系统大量借鉴了它们的设计思路，但尝试在一个它们没有重点覆盖的层面上做整合：把评估、改进、验证组合成一个针对 Skill 的闭环。
 
 | 系统 | 优化对象 | 粒度 | diff 可读？ | 多维度？ | 反馈来源 |
 |------|---------|------|:-----------:|:-------:|---------|
@@ -604,17 +604,15 @@ xychart-beta
 | LangSmith | agent trace | trace | N/A | 多 metric | 可观测性平台 |
 | Karpathy autoresearch | train.py | 文件 | ✅ | 单标量 | 训练 loss |
 
-几个关键差异化：
+表里最明显的区别在两列："diff 可读？"和"多维度？"。
 
-**执行效果评估，不是文档检查。** PromptFoo 和 ClawHub 的 skill-quality-check 做的是 assertion 检查。我们的 evaluator 让 AI 真正拿着 SKILL.md 去跑任务，看它到底能不能做对。R²=0.00 告诉我们：文档检查和执行效果之间没有统计关系，你必须实际跑。
+DSPy 的 MIPROv2 在 token 粒度上做贝叶斯搜索，跑完你看 diff 经常不知道为什么删了一个逗号或换了一个 "please"。我们改的是 SKILL.md 里的段落和示例，每个 diff 人能读、能判断、能手动回滚。搜索空间小很多，但对 skill 来说够用。
 
-**多维度 Pareto，不是单一分数。** DSPy、autoresearch、PromptFoo 都用单一标量。单一标量的陷阱：accuracy 涨了但 trigger_quality 崩了——加权得分还涨了。Pareto front 要求每个维度独立不退步，98 行 Python 拦住了至少三个 skill 被搞坏。
+另一个区别是多维度。DSPy、Karpathy autoresearch、PromptFoo 都用单一标量做优化目标。单一标量容易藏住 tradeoff：accuracy 从 0.83 涨到 0.91，trigger_quality 从 0.80 掉到 0.55，算加权得分居然还涨了 0.02。如果没有 Pareto front 拦住这种候选，skill 就废了。
 
-**用户隐式反馈闭环。** LangSmith 做 trace 采集但主要输出到 dashboard 供人分析。我们尝试往前走一步：session-feedback-analyzer 从 Claude Code 会话日志提取用户纠正信号，**直接对接 generator 驱动下一轮改进**，跳过人工分析环节。这个思路不算新——RLHF 在模型训练层面做类似的事——但在 prompt/skill 层面的实现我们还没看到太多先例。
+LangSmith 做 trace 采集但主要输出到 dashboard 供人分析。我们的 session-feedback-analyzer 往前走了一步：从 Claude Code 会话日志提取用户纠正信号，直接对接 generator 驱动下一轮改进，跳过人工分析环节。RLHF 在模型训练层面做类似的事，但在 prompt/skill 层面这样做的工具还不多。
 
-**diff 可读。** DSPy 的 MIPROv2 在 token 粒度做搜索，改完看 diff 经常是懵的。我们改的是段落和示例，每个 diff 人能读懂、能判断、能回滚。
-
-**连续自主运行。** 不是手动跑一次。设好 cost cap，睡前启动，第二天看报告。Karpathy 用 700 次实验两天提升 11%，我们在 4 个 skill 上平均 +0.138，费用 -20。
+autoloop-controller 让整个流水线可以无人值守运行。设好 cost cap 和终止条件，睡前启动，第二天看报告。Karpathy 用 700 次实验两天提升了 11%，我们在 4 个 skill 上平均 +0.138，费用 $15-20。
 
 ## 连续跑
 
@@ -641,15 +639,15 @@ flowchart TD
 
 - **4 个 GENERIC skill → 全部 SOLID**，平均 +0.138，总费用 $15-20
 - **15 个管线 skill 均分 83.3% → 91.2%**，13/15 达到 POWERFUL
-- **session-feedback-analyzer** 从真实会话提取 28 个反馈事件，code-review-enhanced 被纠正 9 次——跟体感完全一致
+- **session-feedback-analyzer** 从真实会话提取 28 个反馈事件，code-review-enhanced 被纠正 9 次，跟体感完全一致
 - **409 个测试**全部通过，依赖只有 pyyaml 和 pytest，不需要任何外部服务（除了 evaluator 的 `claude -p`）
 - 已发布到 **ClawHub**，搜索 `auto-improvement` 即可安装
 
 几个关键教训：
 
-**先有评估再做改进。** 我最初顺序反了——先写 generator 和 executor，改完不知道好不好。掉头先做评估之后一切才顺起来。听起来像废话，做起来真的会忘。
+**先有评估再做改进。** 我最初顺序反了，先写 generator 和 executor，改完不知道好不好。掉头先做评估之后一切才顺起来。听起来像废话，做起来真的会忘。
 
-**Pareto front 是 ROI 最高的组件。** 98 行 Python，拦住了至少三个 skill 不被"优化"搞坏。加权得分的陷阱防不胜防——accuracy 涨了但 trigger_quality 崩了，总分居然还涨了 0.02。
+**Pareto front 是 ROI 最高的组件。** 98 行 Python，拦住了至少三个 skill 不被"优化"搞坏。加权得分的陷阱防不胜防：accuracy 涨了但 trigger_quality 崩了，总分居然还涨了 0.02。
 
 **成本控制是设计约束，不是事后补丁。** evaluator 一次 $3-5，100 个 skill 的团队一个月可能 $5000。conditional evaluation（低分候选跳过 evaluator）省了 60%，但这是后来才补的。
 
@@ -657,7 +655,7 @@ flowchart TD
 
 说清楚这个问题到底是什么。
 
-传统做法：一个人写 SKILL.md，同一个人写 task suite 来测试。问题是——你写的测试自然会覆盖你写的内容。skill-creator 的 accuracy 评分 0.70（最低），但 evaluator pass rate 100%（最高）。不是它真的好，是 task suite 恰好只测了它教的东西。这像考试出题人自己做自己的卷子。
+传统做法：一个人写 SKILL.md，同一个人写 task suite 来测试。问题是，你写的测试自然会覆盖你写的内容。skill-creator 的 accuracy 评分 0.70（最低），但 evaluator pass rate 100%（最高）。不是它真的好，是 task suite 恰好只测了它教的东西。这像考试出题人自己做自己的卷子。
 
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
 <div style="display:flex;gap:16px">
