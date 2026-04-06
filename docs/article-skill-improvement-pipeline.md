@@ -117,6 +117,433 @@ OMC 的核心贡献是 Ralph 模式：利用 Claude Code 的 Stop hook，在 age
 
 </div>
 
+### 15 个 Skill 各自做什么，数据怎么流转
+
+光看架构图可能还是不清楚每个 skill 到底干什么。下面逐个说，重点是它们之间的数据传递关系。
+
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+
+<div style="margin-bottom:20px">
+<div style="font-size:12px;font-weight:700;color:#16a34a;letter-spacing:1px;margin-bottom:10px">📊 评估层：三个信号源，回答"这个 skill 到底好不好"</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>① improvement-learner</b> — 结构质量 lint<br/>
+<span style="color:#666;font-size:12px">读 SKILL.md → 六个维度打分（accuracy/coverage/reliability/efficiency/security/trigger_quality）→ 输出 JSON 评分报告。accuracy 用 LLM-as-Judge（claude -p）做语义评估，其他维度用确定性检查。按 skill 类别差异化权重（Tool 类 reliability 30%，Knowledge 类 accuracy 40%）。同时做 Karpathy 自改进循环：评估→找最弱维度→生成改进→应用→重评估→保留或回滚。三层记忆（HOT/WARM/COLD）记住哪些策略有效。</span><br/>
+<span style="display:inline-block;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: skill 目录路径 → 输出: scores JSON + improvement report</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>② improvement-evaluator</b> — 执行效果测试<br/>
+<span style="color:#666;font-size:12px">读 task_suite.yaml（YAML 定义的测试任务集）→ 把 SKILL.md 内容注入 prompt → 调 <code>claude -p</code> 真实执行 → 三种 Judge 评判输出（ContainsJudge 关键词检查 / PytestJudge pytest 验证 / LLMRubricJudge 语义评分）→ 输出 pass_rate。支持 baseline 对比（7 天缓存）、pass@k 多次采样、多模型（--model）、对抗测试生成（adversarial_generator）。</span><br/>
+<span style="display:inline-block;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: task_suite.yaml + SKILL.md → 输出: evaluation.json (pass_rate, per-task results)</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>③ session-feedback-analyzer</b> — 用户隐式反馈<br/>
+<span style="color:#666;font-size:12px">解析 <code>~/.claude/projects/**/*.jsonl</code> 会话日志 → 检测 Skill 调用（tool_use 或 slash command）→ 在 3-turn 影响窗口内分类用户反应（correction/acceptance/partial）→ 按维度归因（accuracy/coverage/reliability...）→ 追加写入 feedback.jsonl。输出 per-skill 的 correction_rate 和 dimension hotspots。</span><br/>
+<span style="display:inline-block;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: session JSONL 日志 → 输出: feedback.jsonl (per-event, append-only)</span>
+</div>
+</div>
+
+<div style="margin-bottom:20px">
+<div style="font-size:12px;font-weight:700;color:#2563eb;letter-spacing:1px;margin-bottom:10px">🔄 改进层：五步流水线，把评估信号变成实际改进</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>④ improvement-generator</b> — 生成改进候选<br/>
+<span style="color:#666;font-size:12px">读目标 SKILL.md + 反馈源（feedback.jsonl、failure traces、memory patterns）→ 生成排序的改进候选列表。每个候选有 category（docs/reference/guardrail/prompt/workflow/tests）和 risk_level（low/medium/high）。trace-aware：读到"accuracy 策略失败 3 次"就跳过。读到用户反馈热点就优先改那个维度。</span><br/>
+<span style="display:inline-block;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: --target skill + --source feedback/traces → 输出: candidates.json</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑤ improvement-discriminator</b> — 多信号打分<br/>
+<span style="color:#666;font-size:12px">读 candidates.json → 四种打分模式叠加：启发式规则（类别加分+风险惩罚）+ evaluator 证据 + LLM-as-Judge（clarity/specificity/consistency/safety 四维）+ 多审阅者盲审 panel（CONSENSUS/VERIFIED/DISPUTED 认知标签）。DISPUTED 的候选自动进入人工审核队列。</span><br/>
+<span style="display:inline-block;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: candidates.json → 输出: ranking.json (scored + recommendations)</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑥ improvement-executor</b> — 应用变更<br/>
+<span style="color:#666;font-size:12px">读 ranking.json 里的最高分候选 → 4 种操作（append_markdown_section / replace_markdown_section / insert_before_section / update_yaml_frontmatter）→ 执行前自动备份到 <code>executions/backups/&lt;run-id&gt;/</code> → 生成 receipt JSON 用于回滚。只有 low-risk 的 docs/reference/guardrail 类候选自动执行，prompt/workflow/code 类进 pending 队列。</span><br/>
+<span style="display:inline-block;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: ranking.json + candidate-id → 输出: execution.json (diff + backup path)</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑦ improvement-gate</b> — 七层质量门禁<br/>
+<span style="color:#666;font-size:12px">读 ranking.json + execution.json → 7 层机械验证（Schema → Compile → Lint → RegressionGate → ReviewGate → DoubtGate → HumanReviewGate）。任一层 fail 就拒绝。RegressionGate 用 Pareto front 做 per-dimension 回归检测（security 2% 容差，efficiency 10%，其他 5%）。DoubtGate 检测投机语言（阈值按候选类别差异化）。输出四种决策：keep / pending_promote / reject / revert。</span><br/>
+<span style="display:inline-block;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: ranking + execution artifacts → 输出: receipt.json (decision + per-layer results)</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑧ improvement-orchestrator</b> — 全流程协调<br/>
+<span style="color:#666;font-size:12px">一键跑完 generator → discriminator → evaluator → executor → gate 五步。gate=revert 时提取 failure trace 注入下一轮 generator（Ralph Wiggum 重试，最多 3 次）。evaluator 对低风险候选自动跳过（adaptive complexity）。evaluator 结果传递给 gate 的 RegressionGate。输出 pipeline-summary.json。</span><br/>
+<span style="display:inline-block;background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: --target skill + --state-root → 输出: pipeline-summary.json</span>
+</div>
+</div>
+
+<div style="margin-bottom:20px">
+<div style="font-size:12px;font-weight:700;color:#7c3aed;letter-spacing:1px;margin-bottom:10px">⚙️ 控制层：让流水线持续运转</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑨ autoloop-controller</b> — 连续运行<br/>
+<span style="color:#666;font-size:12px">包裹 orchestrator 在外层循环里。5 种终止条件：max_iterations / cost_cap / 分数平台期 / keep-reject 震荡 / correction_rate 没下降。每轮写 handoff 文档（Decided/Rejected/Scores/Remaining）保证跨迭代上下文存活。状态持久化到 JSON，crash 后重启接着跑。支持 single-run / continuous / scheduled 三种模式。</span><br/>
+<span style="display:inline-block;background:#faf5ff;border:1px solid #c4b5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: --target + --max-iterations + --max-cost → 输出: autoloop_state.json + handoffs/</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑩ benchmark-store</b> — 基线和质量分级<br/>
+<span style="color:#666;font-size:12px">维护 Pareto front（per-dimension 最优记录）、冻结基准（frozen benchmarks）、质量分级（POWERFUL ≥85% / SOLID 70-84% / GENERIC 55-69% / WEAK &lt;55%）。评估标准定义了 per-category 权重矩阵（6 种 skill 类别 × 5 个维度）。gate 的 RegressionGate 查询 Pareto front 判定是否退步。</span><br/>
+<span style="display:inline-block;background:#faf5ff;border:1px solid #c4b5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: scores dict → 输出: regression check result + tier classification</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑪ execution-harness</b> — Agent 执行可靠性（21 patterns）<br/>
+<span style="color:#666;font-size:12px">蒸馏自 OMC + claude-reviews-claude + ccunpacked + claude-howto。核心 patterns：Ralph（Stop hook 持续执行）、Handoff（context 压缩时决策不丢）、工具错误升级（5 次失败后强制换方案）、原子文件写入（write-then-rename）、Cancel TTL（30s 过期防止旧信号杀新 session）。不是代码库——是可组合的 pattern 指南。</span><br/>
+<span style="display:inline-block;background:#faf5ff;border:1px solid #c4b5fd;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">纯 knowledge skill，21 个 pattern reference 文件 + ralph shell 脚本</span>
+</div>
+</div>
+
+<div style="margin-bottom:20px">
+<div style="font-size:12px;font-weight:700;color:#f59e0b;letter-spacing:1px;margin-bottom:10px">🛠️ 工具层：skill 的生命周期管理</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑫ skill-forge</b> — 从零生成 skill + task suite<br/>
+<span style="color:#666;font-size:12px">两种模式：<code>--from-skill</code>（给已有 SKILL.md 自动生成 task_suite.yaml）和 <code>--from-spec</code>（从 spec YAML 生成 SKILL.md + task suite）。task 从 frontmatter、When to Use、example/anti-example 标签提取。null-skill calibration 过滤裸跑 Claude 就能通过的任务。</span><br/>
+<span style="display:inline-block;background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: skill 目录 or spec.yaml → 输出: task_suite.yaml [+ SKILL.md]</span>
+</div>
+
+<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:8px">
+<b>⑬ skill-distill</b> — 多 skill 蒸馏合并<br/>
+<span style="color:#666;font-size:12px">输入 N 个功能重叠的 skill → 四阶段处理（收集 → 分析交集/独有/冲突/冗余 → 用户确认 → 生成+验证）→ 输出一个蒸馏版 skill。body ≤500 行，长尾细节进 references/。生成后接入 learner 验证质量。</span><br/>
+<span style="display:inline-block;background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:2px 8px;font-size:10px;margin-top:4px">输入: N 个 skill 目录 → 输出: 1 个蒸馏版 skill 目录</span>
+</div>
+</div>
+
+<div>
+<div style="font-size:12px;font-weight:700;color:#6b7280;letter-spacing:1px;margin-bottom:10px">🎯 Demo 目标：用于验证流水线的两个被测 skill</div>
+
+<div style="display:flex;gap:8px">
+<div style="flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+<b>⑭ prompt-hardening</b><br/>
+<span style="color:#666;font-size:12px">硬化 agent prompt 使 LLM 可靠遵循指令。作为流水线的端到端测试目标——用 evaluator 的 task suite 验证硬化效果。</span>
+</div>
+<div style="flex:1;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+<b>⑮ deslop</b><br/>
+<span style="color:#666;font-size:12px">反 AI 味写作。蒸馏自 slopbuster + humanizer + 中文写作笔记。本身也是 skill-distill 的蒸馏产出案例。</span>
+</div>
+</div>
+</div>
+
+</div>
+
+### 数据流总览
+
+一个完整的改进周期中数据怎么流转：
+
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+<div style="border-radius:12px;padding:20px;background:#f8fafc;border:1px solid #e2e8f0">
+
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+<span style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:6px 10px;font-size:11px"><b>session JSONL</b></span>
+<span style="color:#999">→ feedback-analyzer →</span>
+<span style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:6px 10px;font-size:11px"><b>feedback.jsonl</b></span>
+<span style="color:#999">→</span>
+<span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>generator</b></span>
+</div>
+
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+<span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>generator</b></span>
+<span style="color:#999">→ candidates.json →</span>
+<span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>discriminator</b></span>
+<span style="color:#999">→ ranking.json →</span>
+<span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>evaluator</b></span>
+<span style="color:#999">→ evaluation.json</span>
+</div>
+
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+<span style="color:#999">ranking.json →</span>
+<span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>executor</b></span>
+<span style="color:#999">→ execution.json + backup →</span>
+<span style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:6px 10px;font-size:11px"><b>gate</b></span>
+<span style="color:#999">→ receipt.json</span>
+</div>
+
+<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+<span style="color:#999">receipt=revert →</span>
+<span style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;font-size:11px"><b>failure trace</b></span>
+<span style="color:#999">→ 注入 generator 下一轮 →</span>
+<span style="background:#faf5ff;border:1px solid #c4b5fd;border-radius:6px;padding:6px 10px;font-size:11px"><b>autoloop</b></span>
+<span style="color:#999">→ 写 handoff → 下一轮迭代</span>
+</div>
+
+</div>
+</div>
+
+每个 skill 之间通过 **JSON 文件** 传递数据（candidates.json → ranking.json → execution.json → receipt.json）。这是有意设计的——不依赖内存中的对象传递，每一步的输入输出都可审计、可重放、可单独调试。orchestrator 把它们串起来，autoloop 让它们循环跑。
+
+## 15 个 Skill 各自做什么
+
+上面的架构图是鸟瞰。下面拆开每个 skill，说清楚它做什么、输入输出是什么、数据怎么流转。
+
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+
+<div style="font-size:12px;font-weight:700;color:#16a34a;letter-spacing:1px;margin-bottom:10px">📊 评估层：三种信号，从不同角度回答"这个 skill 好不好"</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:280px;background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:14px">
+<b>① improvement-learner</b><br/>
+<span style="font-size:11px;color:#666">做什么：读 SKILL.md，从 6 个维度打分（accuracy/coverage/reliability/efficiency/security/trigger_quality）。accuracy 用 LLM-as-Judge 评估（$0.5/次），其余用代码检查。按 skill 类别差异化权重（Tool 类 reliability 30%，Knowledge 类 accuracy 40%）。<br/><br/>
+输入：<code>--skill-path /path/to/skill</code><br/>
+输出：JSON <code>{final_scores: {accuracy: 0.83, ...}, tier: "SOLID"}</code><br/>
+流向：分数进 <b>benchmark-store</b> 的 Pareto front；弱维度信息传给 <b>generator</b> 决定改什么</span>
+</div>
+<div style="flex:1;min-width:280px;background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:14px">
+<b>② improvement-evaluator</b><br/>
+<span style="font-size:11px;color:#666">做什么：拿着 SKILL.md 让 Claude 真正跑任务（<code>claude -p</code>），用 task_suite.yaml 定义的测试用例验证执行效果。三种 judge：关键词检查、pytest 验证、LLM 语义评分。支持 pass@k 多次采样和多模型对比（<code>--model</code>）。<br/><br/>
+输入：<code>--task-suite suite.yaml --skill-path /path</code><br/>
+输出：JSON <code>{pass_rate: 0.86, task_results: [...]}</code><br/>
+流向：pass_rate 传给 <b>gate</b> 的 RegressionGate；失败任务详情传给 <b>generator</b> 做针对性修复</span>
+</div>
+<div style="flex:1;min-width:280px;background:#fff;border:1px solid #bbf7d0;border-radius:8px;padding:14px">
+<b>③ session-feedback-analyzer</b><br/>
+<span style="font-size:11px;color:#666">做什么：解析 <code>~/.claude/projects/</code> 下的会话 JSONL，找到 Skill 调用后用户是纠正（"不对"/"wrong"）、接受（"looks good"）还是部分纠正（"可以，但是..."）。计算每个 skill 的 correction_rate。<br/><br/>
+输入：<code>--session-dir ~/.claude/projects/</code><br/>
+输出：<code>feedback.jsonl</code>（每行一个反馈事件）<br/>
+流向：correction 热点传给 <b>generator</b>（优先改被用户纠正最多的维度）；correction_rate 趋势传给 <b>autoloop</b> 做收敛检测</span>
+</div>
+</div>
+
+<div style="text-align:center;color:#999;margin:8px 0">↓ 评估信号驱动改进 ↓</div>
+
+<div style="font-size:12px;font-weight:700;color:#2563eb;letter-spacing:1px;margin-bottom:10px">🔄 改进层：五个阶段，每个阶段一个 skill</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:14px">
+<b>④ improvement-generator</b><br/>
+<span style="font-size:11px;color:#666">做什么：分析目标 skill + 读取反馈信号（evaluator 失败、用户 correction 热点、历史 failure trace），生成改进候选。每个候选有类别（docs/prompt/workflow）和风险等级（low/medium/high）。同一维度失败 3 次以上的策略自动跳过。<br/><br/>
+输入：<code>--target /skill --source feedback.jsonl</code><br/>
+输出：<code>candidates.json</code><br/>
+流向：→ <b>discriminator</b></span>
+</div>
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:14px">
+<b>⑤ improvement-discriminator</b><br/>
+<span style="font-size:11px;color:#666">做什么：对候选打分。4 种模式可叠加——启发式规则、evaluator 证据加权、LLM Judge 语义评估（claude/openai/mock）、多审阅者盲审 panel（产出 CONSENSUS/VERIFIED/DISPUTED 认知标签）。DISPUTED 候选进人工队列。<br/><br/>
+输入：<code>candidates.json</code><br/>
+输出：<code>ranking.json</code>（scored + recommendation: accept/hold/reject）<br/>
+流向：→ <b>evaluator</b>（高分才跑）或跳过 → <b>executor</b></span>
+</div>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:14px">
+<b>⑥ improvement-executor</b><br/>
+<span style="font-size:11px;color:#666">做什么：把 accepted 候选应用到目标文件。4 种操作：追加段落、替换段落（按标题匹配）、标题前插入、更新 YAML frontmatter。每次自动备份到 <code>backups/&lt;run-id&gt;/</code>，生成 receipt JSON 用于回滚。<code>--dry-run</code> 预览。<br/><br/>
+输入：<code>ranking.json + candidate-id</code><br/>
+输出：<code>execution.json</code>（含 diff 和 rollback 指针）<br/>
+流向：→ <b>gate</b></span>
+</div>
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:14px">
+<b>⑦ improvement-gate</b><br/>
+<span style="font-size:11px;color:#666">做什么：7 层机械门禁，任一层失败就拒绝。SchemaGate → CompileGate → LintGate → RegressionGate（Pareto per-dim 容差：security 2%、efficiency 10%、其他 5%）→ ReviewGate → DoubtGate（按类别差异化阈值）→ HumanReviewGate。<br/><br/>
+输入：<code>ranking.json + execution.json</code><br/>
+输出：<code>receipt.json</code>（decision: keep/revert/pending/reject）<br/>
+流向：keep → <b>benchmark-store</b>；revert → 提取 trace → 回 <b>generator</b></span>
+</div>
+</div>
+<div style="background:#fff;border:1px solid #bfdbfe;border-radius:8px;padding:14px;margin-bottom:12px">
+<b>⑧ improvement-orchestrator</b><br/>
+<span style="font-size:11px;color:#666">做什么：把 ④→⑤→②→⑥→⑦ 串成一次完整的改进流水线。自动 baseline 评估（先跑当前 SKILL.md 看哪些任务失败，作为 generator 输入）。低风险 docs 类候选跳过 evaluator（adaptive complexity）。Evaluator 结果转发给 gate。gate=revert 时提取 failure trace 注入下一轮（Ralph Wiggum loop，最多 3 次）。<br/><br/>
+输入：<code>--target /skill --state-root /state [--task-suite suite.yaml]</code><br/>
+输出：<code>pipeline-summary.json</code> + stdout 摘要</span>
+</div>
+
+<div style="text-align:center;color:#999;margin:8px 0">↓ 单次改进之上 ↓</div>
+
+<div style="font-size:12px;font-weight:700;color:#7c3aed;letter-spacing:1px;margin-bottom:10px">⚙️ 控制层 + 工具层</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px">
+<b>⑨ autoloop-controller</b><br/>
+<span style="font-size:11px;color:#666">做什么：包一个外层循环反复调 orchestrator。5 种终止条件（max iterations / cost cap / 分数平台期 / 震荡 / correction_rate 平台期）。每轮写 handoff 文档保证跨迭代上下文存活。状态持久化到 JSON，crash 后自动恢复。<br/><br/>
+输入：<code>--target /skill --max-iterations 5 --max-cost 50</code><br/>
+输出：<code>autoloop_state.json + handoffs/iteration-N.md</code></span>
+</div>
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px">
+<b>⑩ benchmark-store</b><br/>
+<span style="font-size:11px;color:#666">做什么：维护历史评分基线和 Pareto front。质量分级（POWERFUL ≥85% / SOLID 70-84% / GENERIC 55-69% / WEAK &lt;55%）。冻结基准用于回归检测。per-category 权重表。<br/><br/>
+输入：learner/evaluator 的分数<br/>
+输出：regression check result、tier classification</span>
+</div>
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px">
+<b>⑪ execution-harness</b><br/>
+<span style="font-size:11px;color:#666">做什么：21 个可组合 pattern 增强 dispatched agent 执行可靠性。Ralph 持续执行（Stop hook 拦截提前停止）、Handoff 文档（context 压缩后决策不丢）、工具错误升级（第 5 次失败强制换方案）、原子写入、cancel TTL 等。<br/><br/>
+纯指令型 skill，无脚本产出。Pattern 在其他 skill 中被采用。</span>
+</div>
+</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px">
+<b>⑫ skill-forge</b><br/>
+<span style="font-size:11px;color:#666">做什么：从需求 spec 或已有 SKILL.md 生成完整 skill + task_suite.yaml。从 frontmatter、When to Use、example/anti-example 标签提取测试场景。null-skill calibration 过滤裸跑就能过的任务。<br/><br/>
+输入：<code>--from-skill /path</code> 或 <code>--from-spec spec.yaml</code><br/>
+输出：skill 目录 + task_suite.yaml</span>
+</div>
+<div style="flex:1;min-width:250px;background:#fff;border:1px solid #ddd6fe;border-radius:8px;padding:14px">
+<b>⑬ skill-distill</b><br/>
+<span style="font-size:11px;color:#666">做什么：把 N 个功能重叠的 skill 合并为 1 个蒸馏版。四阶段：收集 → 分析（交集/独有/冲突/冗余） → 用户确认 → 生成 + pipeline 验证。500 行 body 上限，长尾进 references/。<br/><br/>
+输入：N 个源 skill 路径<br/>
+输出：蒸馏后的 skill 目录</span>
+</div>
+</div>
+
+<div style="font-size:12px;font-weight:700;color:#666;letter-spacing:1px;margin-bottom:10px">🎯 Demo 目标（用来验证管线效果的 skill）</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+<div style="flex:1;min-width:250px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+<b>⑭ prompt-hardening</b><br/>
+<span style="font-size:11px;color:#666">硬化 agent prompt 使 LLM 可靠遵循指令。16 个强化模式（P1-P16）。作为 evaluator 的 A/B 测试目标——裸跑 vs 加载 skill，验证 skill 是否真的有用。</span>
+</div>
+<div style="flex:1;min-width:250px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px">
+<b>⑮ deslop</b><br/>
+<span style="font-size:11px;color:#666">反 AI 味写作，两次 pass（先去模式再注灵魂）。蒸馏自 slopbuster + humanizer + 中文写作笔记。作为 skill-distill 的蒸馏效果验证目标。这篇文章本身用 deslop 从 7.5 分改到 8.4 分。</span>
+</div>
+</div>
+
+</div>
+
+### 一次完整改进的数据流
+
+一个 skill 从评估到改进完成，数据经过这些节点：
+
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+<div style="border-radius:12px;padding:20px;background:#f8fafc;border:1px solid #e2e8f0">
+<div style="font-size:12px;font-weight:700;color:#334155;margin-bottom:12px">📦 数据流示例：改进 release-notes skill</div>
+<div style="font-size:11px;line-height:1.8">
+<b>1.</b> <code>learner</code> 读 SKILL.md → 发现 accuracy=0.68（缺 module mapping）→ 弱维度信息写入 state<br/>
+<b>2.</b> <code>session-feedback-analyzer</code> 读会话日志 → 发现 release-notes 被用户纠正 5 次，4 次在 accuracy 维度 → <code>feedback.jsonl</code><br/>
+<b>3.</b> <code>generator</code> 读 state + feedback.jsonl + 历史 trace → 生成 3 个候选（加 module mapping 表 / 补 example / 加 guardrail）→ <code>candidates.json</code><br/>
+<b>4.</b> <code>discriminator</code> 打分 → 候选 1 得分 7.2（accept），候选 2 得分 5.8（hold），候选 3 得分 4.1（reject）→ <code>ranking.json</code><br/>
+<b>5.</b> <code>evaluator</code> 跑 7 个 task → 候选 1 通过率 86%（baseline 也是 86%，但失败的任务不同了，模块分类修好了）→ <code>evaluation.json</code><br/>
+<b>6.</b> <code>executor</code> 应用候选 1 → 备份原文件 → 写 diff → <code>execution.json</code><br/>
+<b>7.</b> <code>gate</code> 7 层检查 → Schema ✅ Compile ✅ Lint ✅ Regression ✅ Review ✅ Doubt ✅ Human ✅ → <code>decision: keep</code><br/>
+<b>8.</b> <code>benchmark-store</code> 记录新分数到 Pareto front → <code>release-notes: SOLID (0.831)</code>
+</div>
+</div>
+</div>
+
+### 15 个 Skill 各自干什么、数据怎么流转
+
+光看架构图还是抽象。下面把每个 skill 的职责和它们之间的数据传递讲清楚。
+
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;margin:24px 0">
+
+<div style="margin-bottom:16px;padding:16px;border-radius:12px;background:#f0fdf4;border:1px solid #86efac">
+<div style="font-size:11px;font-weight:700;color:#16a34a;letter-spacing:1px;margin-bottom:12px">📊 评估层 — 三个独立信号源，各有各的成本和适用场景</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #bbf7d0;border-radius:8px">
+<b>① improvement-learner</b> — Karpathy 式自改进循环<br/>
+<span style="color:#666;font-size:12px">输入：skill 目录路径。读 SKILL.md 内容，从 frontmatter 检测 skill 类别（tool/knowledge/orchestration/review/rule/learning），按类别选择不同的评估权重。6 个维度打分：accuracy（LLM-as-Judge 语义评分，不是 regex）、coverage、reliability（pytest 结果 + harness pattern 检查）、efficiency、security（gate 式——critical issue 直接清零所有分数）、trigger_quality。维护 HOT/WARM/COLD 三层记忆，记录哪些改进策略成功过、哪些连续失败了。<br/>
+输出：`{final_scores, memory_stats}` JSON。喂给 benchmark-store 的 Pareto front。<br/>
+成本：~$0.5/次（一次 `claude -p` LLM judge 调用）</span>
+</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #bbf7d0;border-radius:8px">
+<b>② improvement-evaluator</b> — 真实任务执行测试<br/>
+<span style="color:#666;font-size:12px">输入：SKILL.md + task_suite.yaml（YAML 定义的测试任务集）。把 SKILL.md 拼到每个任务 prompt 前面，调 `claude -p` 执行，拿输出给 judge 评分。三种 judge：ContainsJudge（关键词匹配）、PytestJudge（pytest 验证）、LLMRubricJudge（语义评分）。支持 pass@k 多次采样、baseline 缓存（7 天 TTL）、conditional evaluation（低分候选跳过）、多模型（`--model` 参数）、对抗测试生成（adversarial_generator.py）。executor/grader 分离——prompt 不含 expected，避免 AI 迎合评测。<br/>
+输出：`{execution_pass_rate, baseline_pass_rate, delta, verdict}` JSON。<br/>
+成本：~$3-5/次（每个任务一次 `claude -p`）</span>
+</div>
+
+<div style="padding:12px;background:#fff;border:1px solid #bbf7d0;border-radius:8px">
+<b>③ session-feedback-analyzer</b> — 用户隐式反馈挖掘<br/>
+<span style="color:#666;font-size:12px">输入：`~/.claude/projects/**/*.jsonl`（Claude Code 会话日志）。检测 skill 调用（tool_use `name=="Skill"` 或 `/slash-command`），在 3-turn 影响窗口内分类用户响应：correction（否定关键词/git revert/redo）、partial（接受+转折）、acceptance（明确肯定/静默继续）。每个纠正事件做维度归因（accuracy/coverage/reliability...）。<br/>
+输出：`feedback.jsonl`（append-only，SHA256 去重）+ `correction_rate` 指标。<br/>
+成本：$0（纯本地 JSONL 解析，不调 LLM）</span>
+</div>
+</div>
+
+<div style="text-align:center;color:#999;margin:8px 0">↓ 三个信号分别流向不同的消费者 ↓</div>
+
+<div style="margin-bottom:16px;padding:16px;border-radius:12px;background:#eff6ff;border:1px solid #93c5fd">
+<div style="font-size:11px;font-weight:700;color:#2563eb;letter-spacing:1px;margin-bottom:12px">🔄 改进层 — 五阶段流水线，每阶段的输入是上阶段的输出</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #bfdbfe;border-radius:8px">
+<b>④ improvement-generator</b> — 候选生成<br/>
+<span style="color:#666;font-size:12px">输入：target skill 路径 + `--source` 反馈文件（failure traces、feedback.jsonl、memory patterns）。读 SKILL.md 结构，读 feedback 热点（`_find_correction_hotspots()`），读 evaluator 失败任务（`_find_evaluator_failures()`），用 LLM 生成修复方案。候选按 category（docs/reference/guardrail/prompt/workflow/tests）和 risk_level（low/medium/high）分类。<br/>
+输出：`candidates.json`（候选数组，每个含 id、category、risk_level、execution_plan）。传给 discriminator。</span>
+</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #bfdbfe;border-radius:8px">
+<b>⑤ improvement-discriminator</b> — 多信号打分<br/>
+<span style="color:#666;font-size:12px">输入：`candidates.json`。4 种打分模式可叠加：heuristic（类别加分+风险惩罚）、evaluator evidence（70/30 混合）、LLM Judge（claude/openai/mock，从 clarity/specificity/consistency/safety 四维打分）、盲审 panel（structural + conservative 两个审阅者独立评分，产出 CONSENSUS/VERIFIED/DISPUTED 认知标签）。DISPUTED 自动进人工审核。<br/>
+输出：`ranking.json`（scored_candidates 数组 + recommendations: accept/hold/reject）。传给 evaluator 和 executor。</span>
+</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #bfdbfe;border-radius:8px">
+<b>⑥ improvement-executor</b> — 变更执行<br/>
+<span style="color:#666;font-size:12px">输入：`ranking.json` + candidate-id。4 种 action：append_markdown_section、replace_markdown_section（按标题匹配）、insert_before_section、update_yaml_frontmatter。每次执行前自动备份到 `executions/backups/<run-id>/`，生成 receipt JSON 含 rollback 指针。`--dry-run` 可预览。只有 low-risk docs 类自动执行，prompt/workflow/code 类进 pending 队列。<br/>
+输出：`execution.json`（diff、backup_path、rollback_pointer）。传给 gate。</span>
+</div>
+
+<div style="padding:12px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px">
+<b>⑦ improvement-gate</b> — 7 层质量门禁<br/>
+<span style="color:#666;font-size:12px">输入：`ranking.json` + `execution.json` + 可选 `evaluation.json`。7 层串行检查，任一层 fail 就拒绝：SchemaGate（JSON 结构）→ CompileGate（语法）→ LintGate（风格）→ RegressionGate（Pareto 每维度不退步，per-dimension 容差：security 2%、efficiency 10%、其他 5%）→ ReviewGate（盲审共识非 DISPUTED+reject）→ DoubtGate（检测投机语言，阈值按 category 差异化）→ HumanReviewGate（高风险需人工）。<br/>
+输出：`receipt.json`（decision: keep/pending_promote/reject/revert）。revert 时提取 failure trace 回传 generator。</span>
+</div>
+</div>
+
+<div style="text-align:center;color:#999;margin:8px 0">↓ gate 的四种决策驱动不同后续 ↓</div>
+
+<div style="margin-bottom:16px;padding:16px;border-radius:12px;background:#faf5ff;border:1px solid #c4b5fd">
+<div style="font-size:11px;font-weight:700;color:#7c3aed;letter-spacing:1px;margin-bottom:12px">⚙️ 控制层 — 编排、持久化、执行可靠性</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #ddd6fe;border-radius:8px">
+<b>⑧ improvement-orchestrator</b> — 单次流水线编排<br/>
+<span style="color:#666;font-size:12px">协调 ④→⑤→②→⑥→⑦ 的完整一轮。Adaptive complexity：低风险 docs 类候选跳过 evaluator 省 $3-5。Evaluator 结果传给 gate 的 RegressionGate。gate=revert 时提取 failure trace（哪个维度退步、diff、gate blocker），注入下一轮 generator，最多重试 3 次（Ralph Wiggum loop）。输出 `pipeline-summary.json`。</span>
+</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #ddd6fe;border-radius:8px">
+<b>⑨ autoloop-controller</b> — 连续自主运行<br/>
+<span style="color:#666;font-size:12px">包一个外层循环调 orchestrator。5 种终止条件（OR）：max_iterations、cost_cap、分数平台期（最近 N 轮没超过历史最好）、震荡（keep-reject 交替）、用户反馈平台期（correction_rate 没下降）。每轮结束写 `handoffs/iteration-N.md`（Decided/Rejected/Scores/Remaining）保证跨迭代上下文存活。状态持久化到 `autoloop_state.json`（原子写入），crash 重启接着跑。真实 token 成本追踪。</span>
+</div>
+
+<div style="margin-bottom:10px;padding:12px;background:#fff;border:1px solid #ddd6fe;border-radius:8px">
+<b>⑩ benchmark-store</b> — Pareto front + 质量分级<br/>
+<span style="color:#666;font-size:12px">维护 Pareto front（per-dimension 回归容差）、frozen benchmarks、质量分级（POWERFUL >= 85% / SOLID 70-84% / GENERIC 55-69% / WEAK < 55%）、per-category 权重表。gate 的 RegressionGate 调用 `check_regression()` 做维度回退检测。evaluator 的 baseline 缓存也存这里。</span>
+</div>
+
+<div style="padding:12px;background:#fff;border:1px solid #ddd6fe;border-radius:8px">
+<b>⑪ execution-harness</b> — 21 个 agent 执行可靠性 pattern<br/>
+<span style="color:#666;font-size:12px">解决 dispatched agent 的 5 类失败：提前停止（Ralph Stop hook）、上下文丢失（Handoff 文档）、重试死循环（工具错误升级，5 次后强制换方案）、限速挂死（tmux pane 扫描恢复）、crash 状态丢失（原子写入、session 状态隔离）。还有 Doubt Gate、委托模式、Post-Edit Diagnostics、Adaptive Complexity、Hook Profiles 等。所有状态 session-scoped，`rm -rf` 清理。</span>
+</div>
+</div>
+
+<div style="margin-bottom:16px;padding:16px;border-radius:12px;background:#fefce8;border:1px solid #fde68a">
+<div style="font-size:11px;font-weight:700;color:#a16207;letter-spacing:1px;margin-bottom:12px">🔧 工具层 — 素材获取和生命周期管理</div>
+
+<div style="display:flex;gap:8px">
+<div style="flex:1;padding:10px;background:#fff;border:1px solid #fde68a;border-radius:8px">
+<b>⑫ skill-forge</b><br/>
+<span style="color:#666;font-size:11px">从 spec 或已有 SKILL.md 生成 skill + task_suite.yaml。null-skill calibration 过滤裸跑就能过的任务。对有脚本的 skill 自动生成 harness pattern 检查任务。</span>
+</div>
+<div style="flex:1;padding:10px;background:#fff;border:1px solid #fde68a;border-radius:8px">
+<b>⑬ skill-distill</b><br/>
+<span style="color:#666;font-size:11px">N 个重叠 skill → 1 个蒸馏版。四阶段：Collect → Analyze（交集/独有/冲突/冗余）→ User Confirm → Generate + pipeline 验证。合并 harness 配置，body ≤ 500 行。</span>
+</div>
+</div>
+<div style="display:flex;gap:8px;margin-top:8px">
+<div style="flex:1;padding:10px;background:#fff;border:1px solid #fde68a;border-radius:8px">
+<b>⑭ prompt-hardening</b><br/>
+<span style="color:#666;font-size:11px">Demo target：硬化 agent prompt 的 16 个 pattern（P1-P16）。用于验证评估管线在真实 skill 上的表现。</span>
+</div>
+<div style="flex:1;padding:10px;background:#fff;border:1px solid #fde68a;border-radius:8px">
+<b>⑮ deslop</b><br/>
+<span style="color:#666;font-size:11px">Demo target：反 AI 味写作。蒸馏自 slopbuster + humanizer + 中文笔记。这篇文章就是用它改的。</span>
+</div>
+</div>
+</div>
+
+</div>
+
+**数据流总结**：feedback.jsonl + failure traces + memory patterns → generator 生成候选 → discriminator 打分 → evaluator 跑真实任务 → executor 应用变更 → gate 7 层门禁 → keep（进 Pareto front）或 revert（提取 trace 回 generator 重试）。autoloop 在外层循环，execution-harness 在底层保证 agent 不要半路停。
+
 ## R² = 0.00 的故事
 
 先写了个评分器 improvement-learner，六个维度打分，每个维度按 skill 类别差异化权重：
