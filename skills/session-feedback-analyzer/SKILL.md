@@ -174,10 +174,20 @@ python3 scripts/analyze.py --skill-filter deslop --no-snippets --min-invocations
 
 ## Detection Rules
 
+两种方式触发 skill 检测：
+
+**Tool use 检测**：Assistant message 中出现 `tool_use` block，
+`name == "Skill"`，从 `input.skill` 提取 skill_id。
+这是标准的 Claude Code skill 调用路径。
+
+**Slash command 检测**：System message 中 `subtype == "local_command"`，
+从 `<command-name>` tag 提取 skill name。
+排除内建命令：help, clear, resume, compact, config。
+
 | Path | Condition |
 |------|-----------|
-| Tool use | Assistant message with `tool_use` block, `name == "Skill"`, skill_id from `input.skill` |
-| Slash command | System `subtype == "local_command"` with `<command-name>` tag (excludes help/clear/resume/compact/config) |
+| Tool use | `tool_use` block, `name == "Skill"`, skill_id from `input.skill` |
+| Slash command | `subtype == "local_command"` + `<command-name>` tag |
 
 ## Outcome Classification (3-turn influence window)
 
@@ -207,9 +217,16 @@ Each correction/partial gets a `dimension_hint` from keyword matching. 当用户
 
 `correction_rate = (corrections + 0.5 * partials) / total_invocations`
 
-partial 按 0.5 权重计算是因为 partial acceptance 意味着 skill 输出部分正确 -- 比完全纠正轻，但仍然需要改进。Returns `sufficient_data: false` when sample_size < `--min-invocations`（默认 5），避免小样本下的统计噪音。
+partial 按 0.5 权重计算——partial acceptance 意味着 skill 输出部分正确，
+比完全纠正轻，但仍然需要改进。
+当 sample_size < `--min-invocations`（默认 5）时返回 `sufficient_data: false`，
+避免小样本下的统计噪音。
 
-Trend 计算方式：last 30d correction_rate vs prior 30d correction_rate。Positive delta = worsening（纠正率上升），negative delta = improving（纠正率下降），|delta| <= 0.05 = stable（变化在统计噪音范围内）。autoloop-controller 用 trend 判断是否继续迭代：连续两个周期 stable 则停止。
+Trend 计算方式：last 30d correction_rate vs prior 30d correction_rate。
+Positive delta = worsening（纠正率上升）。
+Negative delta = improving（纠正率下降）。
+|delta| <= 0.05 = stable（变化在统计噪音范围内）。
+autoloop-controller 用 trend 判断是否继续迭代：连续两个周期 stable 则停止。
 
 ## Output Artifacts
 
@@ -289,7 +306,17 @@ print(format_metrics_report(all_metrics))
 
 ## Privacy Controls
 
-`--no-snippets` strips user message snippets from feedback.jsonl output. `~/.claude/feedback-config.json` with `{"enabled": false}` disables all collection -- analyze.py 启动时检查此配置，如果 disabled 则直接退出并打印 "Feedback collection disabled via feedback-config.json"。Skips `pytest/`, `/tmp/`, `/subagents/` dirs to avoid analyzing test runs and sub-agent sessions as real user feedback. Auto-archives events >90 days old to `feedback-store/archive/` to keep the active feedback store small and fast to query。
+`--no-snippets` strips user message snippets from feedback.jsonl output。
+`~/.claude/feedback-config.json` with `{"enabled": false}` disables all collection。
+analyze.py 启动时检查此配置，如果 disabled 则直接退出。
+
+自动跳过的目录：
+- `pytest/` — 测试产生的 session 不是真实用户行为
+- `/tmp/` — 临时 session
+- `/subagents/` — 子 agent session 不反映用户直接意图
+
+Auto-archives events >90 days old to `feedback-store/archive/`
+to keep the active feedback store small and fast to query。
 
 ## Related Skills
 

@@ -417,8 +417,8 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         # 1. Has When to Use / When NOT to Use
         cov_checks.append("when to use" in content_lower or "when to" in content_lower
                           or "## 使用场景" in content or "## 适用" in content)
-        # 2. Has example or anti-example
-        cov_checks.append("<example>" in content or "<anti-example>" in content
+        # 2. Has example or anti-example (with or without attributes)
+        cov_checks.append("<example" in content or "<anti-example" in content
                           or "## Example" in content or "## 示例" in content)
         # 3. Has Output / output artifacts section
         cov_checks.append("## Output" in content or "## output" in content_lower
