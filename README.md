@@ -302,7 +302,7 @@ Running the pipeline on its own skills: 8 out of 13 skills reached POWERFUL tier
 
 Structural scoring has **zero predictive power** for execution pass rate. A skill with "poor" structure can still guide Claude perfectly — and a "well-structured" skill can fail on real tasks. This is why the evaluator (task suites) exists.
 
-Full analysis in [EVALUATION_REPORT.md](docs/archive/EVALUATION_REPORT.md) (historical, scored under earlier 6-dim system).
+The R²=0.00 finding is what drove the shift from regex structural checks to LLM-as-judge for accuracy scoring.
 
 ---
 
