@@ -21,6 +21,37 @@ triggers:
 
 与 rules extraction（a separate capability from ECC's `rules-distill` skill, not part of this repo）和 `nclandrei/distill`（sessions → skills）不同，本 skill 的输入和输出都是 skill：skills → skill。
 
+## Why Distill Instead of Copy
+
+直接复制多个 skill 到一个大文件是最简单的做法，但会带来三个实际问题。
+
+**Tradeoff: 合并 vs 简单拼接**
+
+| 方式 | 优势 | 代价 |
+|------|------|------|
+| 简单拼接 | 零思考成本 | token 膨胀（重复内容 2-3x）、trigger 冲突、用户困惑 |
+| 蒸馏合并 | 去重、消歧、体积可控 | 需要分析和人工确认冲突 |
+
+Because 每个 skill 加载时消耗 context budget，3 个 200 行 skill（~600 行 / ~8k tokens）拼接后重复部分占 60%+，蒸馏为 1 个 ~250 行 skill 可节省 ~50% token 开销。
+
+蒸馏还解决路由冲突问题：当用户说"帮我优化这段文字"，如果 human-writing、slopbuster、humanizer 三个 skill 的 triggers 都匹配，agent 不知道加载哪个。蒸馏后只有一个入口，路由确定性从 ~33% 提升到 100%。
+
+```yaml
+# Before: 3 skills with overlapping triggers
+- skill: human-writing
+  triggers: ["优化.*文字", "写作.*风格"]
+- skill: slopbuster
+  triggers: ["AI.*味", "优化.*文字", "去.*套话"]
+- skill: humanizer
+  triggers: ["去.*AI味", "优化.*文字"]
+
+# After: 1 distilled skill, zero ambiguity
+- skill: deslop
+  triggers: ["优化.*文字", "去.*AI味", "写作.*风格", "去.*套话"]
+```
+
+冲突处理是蒸馏的核心难点：当 skill-A 说"每段不超过 3 句"而 skill-B 说"每段 4-6 句"，不能随意取其一。Phase 2 的冲突分类会把这类矛盾标记出来，Phase 3 交给用户裁决。
+
 ## When to Use
 
 - 同一领域有 2+ 个 skill 功能重叠（如多个写作相关 skill）
@@ -32,6 +63,8 @@ triggers:
 - 从 skills 提取跨领域原则到 rules（rules extraction is a separate capability from ECC's `rules-distill` skill, not part of this repo）
 - 从 session 历史提取重复模式为 skill（用 distill CLI / `skill-create`）
 - 优化单个 skill 的质量（用 `improvement-orchestrator`）
+- 两个 skill 领域不同但恰好在同一项目中使用（如 cpp-expert + ios-expert）
+- 合并后 SKILL.md body 会超过 500 行 token 预算（说明这些 skill 差异太大，不适合蒸馏）
 
 <example>
 正确用法：把 human-writing + slopbuster + humanizer 三个写作 skill 蒸馏为 deslop
@@ -89,6 +122,17 @@ Total content: ~{X} lines / ~{Y}k tokens
 | **冗余** | 可从 LLM 通用知识推导出 | 丢弃（token 效率） |
 
 MUST 逐条标注来源 skill。NEVER 无标注地混合内容。
+
+```
+Phase 2: Cross-Analysis Result
+──────────────────────────────
+Knowledge Point                | Category    | Source(s)     | Destination
+"两次 pass 流程"               | 交集        | A + B + C     | body §Workflow
+"AI 模式清单 (Tier 1)"        | 交集        | A + B         | body §Patterns
+"中文特有语气词列表"           | 独特贡献    | C only        | references/zh-patterns.md
+"每段不超过 3 句" vs "4-6 句"  | 冲突        | A vs B        | → 用户裁决
+"主动语态定义"                 | 冗余        | B             | 丢弃（LLM 已知）
+```
 
 **Token 预算控制**：
 - SKILL.md body: ≤500 行（skill-creator 规范）
@@ -196,18 +240,39 @@ Step 3: (可选) 如有 task_suite.yaml → 跑 evaluator 执行验证
 
 ## Output Artifacts
 
-| 请求 | 交付物 |
-|------|--------|
-| 蒸馏 | 新 skill 目录 + learner 评分 |
-| 分析 | 蒸馏方案（不生成文件，只输出分析） |
+| 请求 | 交付物 | 包含内容 |
+|------|--------|----------|
+| 蒸馏 | 新 skill 目录 + learner 评分 | `SKILL.md` (≤500 行) + `references/` (长尾内容) + 评分报告 |
+| 分析 | 蒸馏方案（不生成文件） | Phase 1 Inventory + Phase 2 交叉分析 + 冲突列表 |
+| 验证 | 质量报告 | learner 6 维评分 + evaluator pass rate（如有 task_suite） |
 
-## Related
+每次蒸馏完成后，输出目录结构示例：
 
-- `skill-creator` — 单个 skill 的创建规范
-- `skill-forge` — 从 spec 自动生成 skill + task_suite
-- `rules-distill` (external, from ECC) — 从 skills 提取 rules（不是合并 skills, not part of this repo）
-- `improvement-orchestrator` — 优化单个 skill 的质量
+```
+deslop/                          # 蒸馏后的 skill
+├── SKILL.md                     # body ≤500 行, frontmatter 含 "蒸馏自" 标注
+├── references/
+│   ├── full-ai-patterns.md      # 完整 AI 模式清单 (~120 行), 来自 A+B
+│   ├── zh-writing-guide.md      # 中文写作特有规则 (~80 行), 来自 C
+│   └── voice-calibration.md     # 语气校准参考 (~60 行), 来自 B
+└── task_suites/
+    └── task_suite.yaml          # 可选, 用于 evaluator 执行验证
+```
+
+## Related Skills
+
+| Skill | Relationship | When to use instead |
+|-------|-------------|-------------------|
+| `skill-creator` | 蒸馏版 skill 的生成遵循 skill-creator 规范 | 从零创建单个 skill |
+| `skill-forge` | 蒸馏后可用 forge 补充 task_suite | 从 spec 自动生成 skill + task_suite |
+| `rules-distill` (external, ECC) | 互补：distill 合并 skills，rules-distill 提取 rules | 需要跨 skill 提取通用原则到 rules |
+| `improvement-orchestrator` | 蒸馏后接入 orchestrator 做质量优化 | 优化单个 skill 而非合并多个 |
+| `improvement-learner` | Phase 4 使用 learner 评分验证蒸馏质量 | 只需评分不需合并 |
+| `improvement-evaluator` | Phase 4 可选的执行验证 | 验证 skill 执行效果 |
 
 ## References
 
-- 蒸馏决策模板和完整检查清单: `references/distillation-checklist.md`
+- 蒸馏决策矩阵和完整检查清单: `references/distillation-checklist.md`
+- skill-creator 规范（body ≤500 行、frontmatter 格式）: 参见 `skill-creator` skill
+- improvement-learner 6 维评分说明: 参见 `improvement-learner` skill
+- 实际蒸馏案例: deslop skill 由 human-writing + slopbuster + humanizer 三个 skill 蒸馏而成
