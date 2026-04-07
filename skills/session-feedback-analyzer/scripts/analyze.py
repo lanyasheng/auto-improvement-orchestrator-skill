@@ -268,10 +268,16 @@ def classify_outcome(
     window_end = next_invocation_idx or len(messages)
 
     # Collect user messages within the influence window
+    # Skip system-injected skill loading messages (contain "Base directory for this skill")
+    SYSTEM_INJECT_MARKERS = ("Base directory for this skill", "<command-name>", "SKILL.md", "---\nname:")
     user_turns: list[tuple[int, dict[str, Any]]] = []
     for idx in range(start_idx, window_end):
         entry = messages[idx]
         if entry.get("type") == "user":
+            text = _extract_user_text(entry)
+            # Skip if this is a system-injected skill prompt, not real user input
+            if any(marker in text for marker in SYSTEM_INJECT_MARKERS):
+                continue
             user_turns.append((idx, entry))
             if len(user_turns) >= INFLUENCE_WINDOW:
                 break

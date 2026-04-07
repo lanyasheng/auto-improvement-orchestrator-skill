@@ -33,23 +33,6 @@ def detect_oscillation(score_history: list[dict], window: int = 4) -> bool:
     return recent_decisions == pattern or recent_decisions == alt_pattern
 
 
-def detect_user_feedback_plateau(
-    correction_rates: list[float],
-    window: int = 3,
-    tolerance: float = 0.05,
-) -> bool:
-    """Detect when user feedback stops improving.
-
-    Returns True if correction_rate has not decreased (beyond tolerance)
-    over the last `window` improvement iterations.
-    """
-    if len(correction_rates) < window:
-        return False
-    recent = correction_rates[-window:]
-    baseline = recent[0]
-    return all(r >= baseline * (1 - tolerance) for r in recent[1:])
-
-
 def compute_weighted_score(scores: dict[str, float], weights: dict[str, float] | None = None) -> float:
     """Compute weighted average score across dimensions.
 

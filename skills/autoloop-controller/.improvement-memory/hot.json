@@ -1,1 +1,19 @@
-[]
+[
+  {
+    "type": "accuracy",
+    "succeeded": true,
+    "context": {
+      "dimension": "accuracy",
+      "scores": {
+        "coverage": 0.9,
+        "accuracy": 0.6571428571428571,
+        "efficiency": 1.0,
+        "reliability": 1.0,
+        "security": 1.0,
+        "trigger_quality": 0.8
+      }
+    },
+    "timestamp": "2026-04-05T15:24:06Z",
+    "hit_count": 1
+  }
+]

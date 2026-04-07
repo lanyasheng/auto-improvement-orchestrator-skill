@@ -61,3 +61,15 @@ htmlcov/
 # Local config (if any)
 .env.local
 *.local
+
+# Runtime databases
+benchmarks.db
+
+# IDE-specific
+.serena/
+
+# Improvement memory snapshots (runtime state)
+**/memory-snapshot.json
+
+# Scraped web articles (reference material)
+web-articles/

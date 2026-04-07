@@ -6,7 +6,7 @@ Closed-loop pipeline that evaluates, improves, and continuously optimizes AI age
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](pyproject.toml)
 
-**15 skills | 8,000+ lines Python | 409 tests | pyyaml + pytest only**
+**13 skills | ~20,000 lines Python | 397 tests | pyyaml + pytest only**
 
 ```mermaid
 graph LR
@@ -32,6 +32,12 @@ graph LR
 ## Quick Start
 
 ```bash
+# Install individual skills via ClawHub
+openclaw skills install improvement-learner
+openclaw skills install improvement-orchestrator
+# ... or any other skill from this repo
+
+# For development: clone the full repo
 git clone https://github.com/lanyasheng/auto-improvement-orchestrator-skill.git && cd auto-improvement-orchestrator-skill && pip install pyyaml pytest
 ```
 
@@ -46,9 +52,9 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 ```json
 {
   "final_scores": {
-    "accuracy": 0.83, "coverage": 0.80, "reliability": 1.00,
-    "efficiency": 0.87, "security": 1.00, "trigger_quality": 0.60,
-    "leakage": 1.00, "knowledge_density": 0.83
+    "accuracy": 0.83, "coverage": 0.80, "completeness": 0.75,
+    "reliability": 1.00, "efficiency": 0.87, "security": 1.00,
+    "trigger_quality": 0.60, "leakage": 1.00, "knowledge_density": 0.83
   }
 }
 ```
@@ -111,7 +117,7 @@ This project solves three problems:
 
 ## Architecture
 
-15 skills + 3 evaluation signals compose into a closed-loop pipeline:
+13 skills (11 pipeline + 2 tools) + 3 evaluation signals compose into a closed-loop pipeline:
 
 ```
                         +-----------+
@@ -130,7 +136,7 @@ This project solves three problems:
                               |
                               v
                         +------+
-                        | gate |  (4) 7-layer quality gate
+                        | gate |  (4) 6-layer quality gate
                         +--+---+
                               |
                               v
@@ -176,6 +182,8 @@ Named after the observation that naive LLM retry loops fail the same way repeate
 
 Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `workflow`, `tests`) and risk level (`low`/`medium`/`high`). Only `low`-risk document candidates auto-execute; everything else enters human review.
 
+Category modifiers (`tool`/`knowledge`/`orchestration`/`rule`) adjust dimension weights per skill type -- tool skills emphasize reliability/security, knowledge skills emphasize accuracy/knowledge_density.
+
 ### Stage 2: Discriminator
 
 4 scoring modes that combine:
@@ -185,7 +193,7 @@ Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `w
 | Heuristic (default) | Source refs + risk penalty + semantic relevance + diff size |
 | + Evaluator evidence | Heuristic 50% + evaluator rubric 50% |
 | + LLM Judge | Heuristic 30% + LLM semantic analysis 70% |
-| + Panel | 4 differentiated reviewers → CONSENSUS / VERIFIED / SPLIT |
+| + Panel | 4 reviewers (structural / conservative / user_advocate / security_auditor) → CONSENSUS / VERIFIED / SPLIT |
 
 ### Stage 3: Evaluator (Novel Contribution)
 
@@ -239,7 +247,7 @@ Applies accepted candidates with automatic backup. 4 action types: `append_markd
 
 Karpathy self-improvement loop:
 
-1. Evaluate across 8 dimensions (accuracy, coverage, reliability, efficiency, security, trigger_quality, leakage, knowledge_density) with category-aware weights
+1. Evaluate across 9 dimensions (coverage, completeness, accuracy, reliability, efficiency, security, trigger_quality, leakage, knowledge_density) with category-aware weights
 2. Find weakest dimension → propose targeted improvement
 3. Backup + apply → re-evaluate
 4. Keep if Pareto-accepted (no dimension regressed), revert otherwise
@@ -286,17 +294,21 @@ Biggest single gain: **reliability 0.30 → 1.00** (auto-generated test stubs th
 
 Average improvement: **+0.138** (GENERIC → SOLID). Cost: ~$15-20 total.
 
+### Self-evaluation: 8/13 POWERFUL, avg 88.7%
+
+Running the pipeline on its own skills: 8 out of 13 skills reached POWERFUL tier (>= 0.85), with an average score of 88.7% across all skills.
+
 ### Learner vs Evaluator: R² = 0.00
 
 Structural scoring has **zero predictive power** for execution pass rate. A skill with "poor" structure can still guide Claude perfectly — and a "well-structured" skill can fail on real tasks. This is why the evaluator (task suites) exists.
 
-Full analysis in [EVALUATION_REPORT.md](EVALUATION_REPORT.md).
+Full analysis in [EVALUATION_REPORT.md](docs/archive/EVALUATION_REPORT.md) (historical, scored under earlier 6-dim system).
 
 ---
 
 ## Design Decisions
 
-**Why Pareto front instead of single score?** — A single scalar hides dimension regressions. Candidate that "improves" coverage by destroying accuracy gets the same weighted score. The Pareto front enforces: each dimension must independently not regress beyond 5% tolerance.
+**Why Pareto front instead of single score?** — A single scalar hides dimension regressions. Candidate that "improves" coverage by destroying accuracy gets the same weighted score. The Pareto front enforces: each dimension must independently not regress beyond its tolerance (security 2%, efficiency 10%, others 5%).
 
 **Why conditional evaluation?** — The evaluator calls `claude -p` per task (~$3/eval). The discriminator score acts as a cheap pre-filter; only candidates above threshold (default: 6.0) proceed. Saves 60%+ of evaluation cost.
 
@@ -313,7 +325,7 @@ skills/
   improvement-generator/     # Stage 1: Propose candidates
   improvement-discriminator/ # Stage 2: Multi-reviewer scoring
   improvement-evaluator/     # Stage 3: Execution effectiveness
-  improvement-gate/          # Stage 4: 7-layer quality gate
+  improvement-gate/          # Stage 4: 6-layer quality gate
   improvement-executor/      # Stage 5: Apply with backup/rollback
   improvement-learner/       # Stage 6: Karpathy self-improvement loop
   improvement-orchestrator/  # Pipeline coordinator
@@ -321,10 +333,8 @@ skills/
   benchmark-store/           # Frozen benchmarks + Pareto front
   session-feedback-analyzer/ # User feedback from Claude Code session logs
   skill-forge/               # Generate skills + task suites from specs
-  skill-distill/             # Merge overlapping skills into one
-  prompt-hardening/          # Demo target: harden agent prompts
-  deslop/                    # Demo target: strip AI-generated text patterns
-  execution-harness/         # 21 patterns for dispatched agent reliability
+  skill-distill/             # Tool: merge overlapping skills into one
+  prompt-hardening/          # Tool: harden agent prompts
 lib/
   common.py                  # Shared utilities
   pareto.py                  # ParetoFront + ParetoEntry
@@ -351,7 +361,7 @@ lib/
 
 | System | Optimizes | Granularity | Human-readable diff? | Multi-dim? | Feedback source |
 |--------|-----------|-------------|:--------------------:|:----------:|-----------------|
-| **This project** | SKILL.md docs | Section | Yes | 8-dim Pareto | Task suite + user implicit |
+| **This project** | SKILL.md docs | Section | Yes | 9-dim Pareto | Task suite + user implicit |
 | DSPy | Prompt tokens | Token | No (Bayesian search) | Single | User-defined metric |
 | TextGrad | LLM output vars | Token | No | Single | LLM "gradients" |
 | MOPrompt | Prompt optimization | Prompt | Yes | Pareto front | Multi-objective evolution |
@@ -371,6 +381,11 @@ lib/
 - **DSPy** — Bayesian optimization of LLM prompts
 
 See [docs/design/user-feedback-loop.md](docs/design/user-feedback-loop.md) for the user feedback loop design.
+
+### Related external projects
+
+- **[execution-harness](https://github.com/lanyasheng/execution-harness)** (v2.0) — 38 patterns x 6 axes for dispatched agent reliability. Independent repo.
+- **deslop** — Strip AI-generated text patterns. External, available via `openclaw skills install deslop-cn`.
 
 ---
 
