@@ -364,6 +364,34 @@ def main(argv: list[str] | None = None) -> int:
         write_json(output_path, artifact)
         print(str(output_path))
 
+        # Generate failure trace for standalone mode too
+        if artifact["evaluation"]["verdict"] == "fail":
+            traces_dir = state_root / "traces"
+            traces_dir.mkdir(parents=True, exist_ok=True)
+            failed_tasks = [
+                {
+                    "task_id": r["task_id"],
+                    "passed": r["passed"],
+                    "score": r.get("score", 0),
+                    "details": r.get("details", "")[:200],
+                    "error": r.get("error", "")[:200],
+                }
+                for r in results
+                if not r["passed"]
+            ]
+            trace = {
+                "candidate_id": f"standalone-{suite.get('skill_id', 'unknown')}",
+                "reason": f"pass_rate {pass_rate:.2f} < 0.5 threshold",
+                "failed_tasks": failed_tasks,
+                "failed_dimension": "execution",
+                "failed_category": "accuracy",
+                "scores_before": {"pass_rate": 0.5},
+                "scores_after": {"pass_rate": pass_rate},
+            }
+            trace_path = traces_dir / f"{run_id}-trace.json"
+            write_json(trace_path, trace)
+            logger.info("Failure trace written to %s", trace_path)
+
         # Pretty print summary
         logger.info("=== Standalone Evaluation Results ===")
         logger.info("Skill: %s", suite.get("skill_id", "unknown"))
@@ -514,6 +542,41 @@ def main(argv: list[str] | None = None) -> int:
     }
     write_json(output_path, artifact)
     print(str(output_path))
+
+    # --- Generate failure trace for generator feedback loop ---
+    if evaluation["verdict"] == "fail":
+        traces_dir = state_root / "traces"
+        traces_dir.mkdir(parents=True, exist_ok=True)
+        failed_tasks = [
+            {
+                "task_id": r["task_id"],
+                "passed": r["passed"],
+                "score": r["score"],
+                "details": r["details"][:200],
+                "error": r["error"][:200],
+            }
+            for r in candidate_results
+            if not r["passed"]
+        ]
+        # Infer category from failed task patterns
+        failed_category = "execution"
+        if any("rubric" in t.get("details", "").lower() for t in failed_tasks):
+            failed_category = "accuracy"
+        elif any("timeout" in t.get("error", "").lower() for t in failed_tasks):
+            failed_category = "efficiency"
+        trace = {
+            "candidate_id": args.candidate_id,
+            "reason": f"execution_pass_rate {candidate_rate:.2f} < baseline {baseline_rate:.2f}",
+            "failed_tasks": failed_tasks,
+            "failed_dimension": "execution",
+            "failed_category": failed_category,
+            "scores_before": {"pass_rate": baseline_rate},
+            "scores_after": {"pass_rate": candidate_rate},
+        }
+        trace_path = traces_dir / f"{run_id}.json"
+        write_json(trace_path, trace)
+        logger.info("Failure trace written to %s", trace_path)
+
     return 0
 
 

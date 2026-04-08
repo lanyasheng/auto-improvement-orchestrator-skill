@@ -181,10 +181,11 @@ def run_evaluation(output_dir: Path, skill_id: str) -> int:
         [
             sys.executable,
             str(evaluator_script),
-            "--skill",
+            "--skill-path",
             skill_id,
-            "--suite",
+            "--task-suite",
             str(output_dir / "task_suite.yaml"),
+            "--standalone",
         ],
         capture_output=True,
         text=True,

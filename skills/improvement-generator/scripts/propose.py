@@ -217,13 +217,41 @@ def load_failure_trace(trace_path: Path | None) -> dict | None:
 
 
 def adjust_candidates_from_trace(candidates: list, trace: dict) -> list:
-    """Adjust candidate priorities based on failure trace."""
+    """Adjust candidate priorities based on failure trace.
+
+    Uses rich trace fields from evaluator:
+    - failed_category: which category failed (execution/accuracy/efficiency)
+    - failed_tasks: specific tasks that failed with details
+    - failed_dimension: which dimension failed
+    - scores_before/scores_after: pass rate delta
+    """
     failed_id = trace.get("candidate_id", "")
-    failed_category = ""
-    # Extract category from candidate_id (e.g., "cand-01-docs" -> "docs")
-    parts = failed_id.split("-")
-    if len(parts) >= 3:
-        failed_category = parts[-1]
+    # Use explicit failed_category if available, else infer from candidate_id
+    failed_category = trace.get("failed_category", "")
+    if not failed_category:
+        parts = failed_id.split("-")
+        if len(parts) >= 3:
+            failed_category = parts[-1]
+
+    # Build a detailed failure context for the rationale
+    reason = trace.get("reason", "unknown")
+    failed_tasks = trace.get("failed_tasks", [])
+    task_summary = ""
+    if failed_tasks:
+        task_ids = [t.get("task_id", "?") for t in failed_tasks[:3]]
+        task_details = [t.get("details", "")[:50] for t in failed_tasks[:3]]
+        task_summary = f" Failed tasks: {', '.join(task_ids)}."
+        if any(task_details):
+            task_summary += f" Details: {'; '.join(d for d in task_details if d)}."
+
+    scores_before = trace.get("scores_before", {})
+    scores_after = trace.get("scores_after", {})
+    score_context = ""
+    if scores_before and scores_after:
+        score_context = (
+            f" Pass rate: {scores_before.get('pass_rate', '?')} → "
+            f"{scores_after.get('pass_rate', '?')}."
+        )
 
     adjusted = []
     for c in candidates:
@@ -231,8 +259,9 @@ def adjust_candidates_from_trace(candidates: list, trace: dict) -> list:
             # Deprioritize the same category that failed
             c["rationale"] = (
                 f"[Retry] Previous {failed_category} attempt failed: "
-                f"{trace.get('reason', 'unknown')}. {c['rationale']}"
+                f"{reason}.{score_context}{task_summary} {c['rationale']}"
             )
+            c["trace_adjusted"] = True
             # Move to end
             adjusted.append(c)
         else:
@@ -365,16 +394,24 @@ def _llm_analyze_and_propose(target: Path, max_candidates: int) -> list[dict] | 
     skill_content = skill_md.read_text(encoding="utf-8")
 
     prompt = (
-        "You are a skill quality analyst. Analyze this SKILL.md and identify "
-        f"the top {max_candidates} concrete quality issues.\n\n"
+        "You are a skill quality analyst. Analyze this SKILL.md and propose "
+        f"exactly {max_candidates} improvement candidates, each targeting a "
+        "DIFFERENT quality dimension.\n\n"
         f"## SKILL.md Content\n```\n{skill_content[:4000]}\n```\n\n"
-        "For each issue, propose a specific fix. Respond with ONLY a JSON array "
-        "where each element has these fields:\n"
+        "IMPORTANT: Each candidate MUST target a different dimension from this list:\n"
+        "- accuracy: fix incorrect/misleading instructions\n"
+        "- coverage: add missing scenarios or edge cases\n"
+        "- efficiency: reduce token usage, remove redundancy\n"
+        "- clarity: improve readability, fix ambiguous wording\n"
+        "- guardrail: add safety constraints or error handling\n"
+        "- workflow: improve step ordering or decision logic\n\n"
+        f"Generate exactly {max_candidates} candidates covering different dimensions. "
+        "Respond with ONLY a JSON array where each element has:\n"
         "- title: short description of the fix\n"
         "- target_path: relative path within the skill (use \"SKILL.md\" if targeting the main file)\n"
         "- category: one of docs/reference/guardrail/prompt/workflow/tests\n"
         "- risk_level: low/medium/high\n"
-        "- rationale: why this change improves quality\n"
+        "- rationale: why this change improves quality (reference the dimension)\n"
         "- proposed_change_summary: what will be changed\n"
         "- executor_support: boolean, true if the change can be applied automatically\n"
         "- execution_plan: object with 'action' (append_markdown_section/replace_markdown_section/insert_before) "
