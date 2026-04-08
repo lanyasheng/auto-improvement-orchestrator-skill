@@ -170,7 +170,13 @@ Three evaluation signals:
 
 ### Retry loop: "Ralph Wiggum"
 
-Named after the observation that naive LLM retry loops fail the same way repeatedly. Our loop captures a structured failure trace (which dimension regressed, what the diff was, what the gate blockers were) and injects it into the next generator call via `--trace`. The generator reads this trace and deprioritizes the same category that previously failed. When all candidates are rejected, the rejection context is also fed back for the next round. Uses trace-aware reflection to avoid repeating failed strategies.
+Named after the observation that naive LLM retry loops fail the same way repeatedly. When a candidate fails, the evaluator writes a structured trace file to `<state-root>/traces/<run-id>.json` containing:
+
+- `failed_tasks`: which specific tasks failed, with details and scores
+- `failed_dimension` / `failed_category`: what type of failure (execution/accuracy/efficiency)
+- `scores_before` / `scores_after`: pass rate delta
+
+The generator reads this trace via `--trace` and deprioritizes the failed category, adjusting candidate priorities based on the specific failure pattern. When a category has failed 3+ times, it's skipped entirely. This approach was inspired by GEPA's trace-aware reflection — early versions only passed `candidate_id` and `reason`, which gave the generator too little signal to adjust effectively.
 
 ---
 
@@ -178,7 +184,7 @@ Named after the observation that naive LLM retry loops fail the same way repeate
 
 ### Stage 1: Generator
 
-**LLM-first architecture**: reads the target SKILL.md and uses LLM analysis to identify concrete quality issues and propose targeted fixes. Falls back to template-based candidates when the `claude` CLI is unavailable. Also consumes feedback signals (user feedback, evaluator failure traces, previous retry traces).
+**LLM-first architecture**: reads the target SKILL.md and uses LLM analysis to propose improvement candidates, each targeting a **different quality dimension** (accuracy, coverage, efficiency, clarity, guardrail, workflow). Falls back to template-based candidates when the `claude` CLI is unavailable. Also consumes feedback signals (user feedback, evaluator failure traces, previous retry traces).
 
 Candidates are typed by category (`docs`, `reference`, `guardrail`, `prompt`, `workflow`, `tests`) and risk level (`low`/`medium`/`high`). Only `low`-risk document candidates auto-execute; everything else enters human review.
 
@@ -294,9 +300,9 @@ Biggest single gain: **reliability 0.30 → 1.00** (auto-generated test stubs th
 
 Average improvement: **+0.138** (GENERIC → SOLID). Cost: ~$15-20 total.
 
-### Self-evaluation: 8/13 POWERFUL, avg 88.7%
+### Self-evaluation: 13/13 POWERFUL, avg 92.2%
 
-Running the pipeline on its own skills: 8 out of 13 skills reached POWERFUL tier (>= 0.85), with an average score of 88.7% across all skills.
+Running the pipeline on its own 13 skills: all reached POWERFUL tier (>= 0.85), with an average score of 92.2%. From the initial 3/13 POWERFUL (avg 83.3%), the main improvements were adding `why` sections and code examples to 7 SKILL.md files, and fixing a bug in example tag matching (`<example name="...">`).
 
 ### Learner vs Evaluator: R² = 0.00
 
@@ -361,7 +367,8 @@ lib/
 
 | System | Optimizes | Granularity | Human-readable diff? | Multi-dim? | Feedback source |
 |--------|-----------|-------------|:--------------------:|:----------:|-----------------|
-| **This project** | SKILL.md docs | Section | Yes | 9-dim Pareto | Task suite + user implicit |
+| **This project** | SKILL.md docs | Section | Yes | 9-dim Pareto | Task suite + user implicit + failure trace |
+| GEPA | Prompts | Prompt | Yes | Pareto front | Trace analysis + synthetic rubric |
 | DSPy | Prompt tokens | Token | No (Bayesian search) | Single | User-defined metric |
 | TextGrad | LLM output vars | Token | No | Single | LLM "gradients" |
 | MOPrompt | Prompt optimization | Prompt | Yes | Pareto front | Multi-objective evolution |
@@ -375,6 +382,7 @@ lib/
 ## References
 
 - **Karpathy autoresearch** — The keep/discard loop pattern
+- **GEPA** — Genetic-Pareto prompt evolution with trace-aware reflection (inspired our trace format)
 - **MOPrompt (arXiv 2508.01541)** — Multi-objective prompt optimization with Pareto front
 - **ADAS (ICLR 2025)** — Meta agent searching over architecture
 - **Aider Benchmark** — Execution-based coding agent evaluation
