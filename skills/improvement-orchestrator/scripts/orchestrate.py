@@ -182,7 +182,7 @@ def run_evaluator(
     candidate_id: str,
     state_root: str,
     task_suite: str | None = None,
-    eval_threshold: float = 6.0,
+    eval_threshold: float = 1.0,
     mock: bool = False,
 ) -> dict[str, Any] | None:
     """Call evaluate.py if a task suite exists for the target skill.
