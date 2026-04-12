@@ -324,7 +324,7 @@ def _llm_propose_skill_fix(target: Path, failed_tasks: list[dict]) -> dict | Non
         "that would fix the failures without breaking what already works.\n\n"
         "Respond with ONLY a JSON object:\n"
         '{{"section_heading": "## <heading to add/replace>", '
-        '"action": "append_markdown_section" or "replace_markdown_section", '
+        '"action": "append_markdown_section" or "replace_markdown_section" or "insert_before_section", '
         '"content_lines": ["line1", "line2", ...], '
         '"rationale": "why this fixes the failures"}}'
     )
@@ -414,7 +414,7 @@ def _llm_analyze_and_propose(target: Path, max_candidates: int) -> list[dict] | 
         "- rationale: why this change improves quality (reference the dimension)\n"
         "- proposed_change_summary: what will be changed\n"
         "- executor_support: boolean, true if the change can be applied automatically\n"
-        "- execution_plan: object with 'action' (append_markdown_section/replace_markdown_section/insert_before) "
+        "- execution_plan: object with 'action' (append_markdown_section/replace_markdown_section/insert_before_section/update_yaml_frontmatter) "
         "and 'content_lines' (array of strings to add/replace)\n\n"
         "Focus on actionable, specific improvements — not generic advice. "
         "Prefer low-risk changes that can be auto-applied. "
