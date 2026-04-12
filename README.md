@@ -95,6 +95,69 @@ python3 skills/session-feedback-analyzer/scripts/analyze.py \
   --output feedback-store/feedback.jsonl
 ```
 
+### Convert session feedback to evaluation tasks (new)
+
+```bash
+python3 skills/session-feedback-analyzer/scripts/session_to_eval.py \
+  --skill-id deslop \
+  --session-dir ~/.claude/projects/ \
+  --output ./task_suites/deslop-from-sessions/
+```
+
+### Generate + evaluate + auto-improve a skill from spec (new)
+
+```bash
+python3 skills/skill-forge/scripts/forge.py \
+  --from-skill /path/to/skill \
+  --output /tmp/forge-output \
+  --evaluate --auto-improve
+```
+
+### Run full pipeline with auto-discovery (new)
+
+The orchestrator now automatically discovers feedback sources and task suites — no `--source` or `--task-suite` args needed:
+
+```bash
+python3 skills/improvement-orchestrator/scripts/orchestrate.py \
+  --target /path/to/skill \
+  --state-root ./state \
+  --auto
+# Auto-discovered 1 feedback source(s)
+# Auto-discovered task suite: .../task_suites/deslop/task_suite.yaml
+```
+
+---
+
+## What's New (2026-04-12)
+
+### Feedback-Driven Skill Evolution
+
+Skills now improve from real user interactions, not just static analysis:
+
+```
+User corrects skill in conversation
+  → SessionEnd hook → analyze.py → feedback.jsonl (real-time)
+  → orchestrator auto-discovers feedback + task_suite
+  → generator → discriminator → evaluator → executor → gate
+  → SKILL.md updated
+```
+
+**Key changes:**
+- **Auto-discovery**: orchestrator finds `feedback.jsonl` and `task_suite.yaml` without CLI args
+- **30-day staleness filter**: only recent feedback flows into improvement candidates
+- **Session-to-eval bridge**: converts real user interactions into evaluator task suites
+- **Forge Phase 3/4**: evaluate + auto-improve + install after skill generation
+- **Pareto fix**: unmeasured dimensions no longer cause false regression blocks
+
+### Claude Code Integration
+
+When used with Claude Code, a SessionEnd hook triggers feedback collection automatically. A SessionStart hook notifies the user when corrections are available for skill improvement:
+
+```
+SKILL IMPROVEMENT AVAILABLE: 2 new correction(s) detected for: deslop
+To trigger: python3 orchestrate.py --target ~/.claude/skills/deslop --state-root /tmp/improve --auto
+```
+
 ---
 
 ## The Problem
@@ -357,7 +420,9 @@ lib/
 
 **Cold memory not implemented** — The three-layer memory's COLD tier (>3 months archive) is designed but not built.
 
-**No concurrent state locking** — `state_machine.py` uses non-atomic JSON read-modify-write. Running multiple pipeline instances against the same `state_root` can cause TOCTOU races.
+**No concurrent state locking** — `state_machine.py` uses non-atomic JSON read-modify-write. Running multiple pipeline instances against the same `state_root` can cause TOCTOU races. The session-end hook uses `flock` to prevent concurrent analyzer runs.
+
+**Orchestrator trigger is manual** — The feedback collection is automatic (SessionEnd hook), but running the orchestrator to apply improvements requires manual invocation. Automated scheduling (cron/watcher) is designed but not yet deployed to allow observation of improvement quality first.
 
 **Regex accuracy fallback is useless** — When `claude` CLI is unavailable, the accuracy dimension falls back to regex checks with self-measured R²=0.00 correlation to actual quality. The LLM judge path (`claude -p`) is strongly recommended.
 
