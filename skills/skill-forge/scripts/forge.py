@@ -72,6 +72,11 @@ def main():
         action="store_true",
         help="Run improvement-orchestrator if score below SOLID.",
     )
+    parser.add_argument(
+        "--install",
+        type=Path,
+        help="Install generated skill to this directory (e.g. ~/.claude/skills/).",
+    )
 
     args = parser.parse_args()
 
@@ -110,8 +115,8 @@ def handle_from_skill(
     out_file = write_task_suite(suite, output_dir)
     print(f"Task suite written to {out_file}")
 
-    if args.evaluate:
-        return run_evaluation(output_dir, suite["skill_id"])
+    if args.evaluate or args.auto_improve:
+        return run_phase3(skill_path, args.evaluate, args.auto_improve, args.mock)
     return 0
 
 
@@ -154,80 +159,171 @@ def handle_from_spec(
     out_file = write_task_suite(suite, skill_dir)
     print(f"Task suite written to {out_file}")
 
-    if args.evaluate:
-        return run_evaluation(skill_dir, suite["skill_id"])
-    if args.auto_improve:
-        return run_auto_improve(skill_dir, suite["skill_id"])
+    if args.evaluate or args.auto_improve:
+        return run_phase3(skill_dir, args.evaluate, args.auto_improve, args.mock)
     return 0
 
 
-def run_evaluation(output_dir: Path, skill_id: str) -> int:
-    """Run improvement-evaluator on the generated task suite."""
-    evaluator_script = (
-        Path.home()
-        / ".claude/skills/improvement-evaluator/scripts/evaluate.py"
-    )
-    if not evaluator_script.exists():
-        print(
-            "Warning: improvement-evaluator not found. "
-            "Skipping evaluation.",
-            file=sys.stderr,
-        )
-        return 0
+# ---------------------------------------------------------------------------
+# Phase 3: Evaluate + Auto-Improve
+# ---------------------------------------------------------------------------
 
+EVALUATOR_SCRIPT = Path.home() / ".claude/skills/improvement-evaluator/scripts/evaluate.py"
+LEARNER_SCRIPT = Path.home() / ".claude/skills/improvement-learner/scripts/self_improve.py"
+ORCHESTRATOR_SCRIPT = Path.home() / ".claude/skills/improvement-orchestrator/scripts/orchestrate.py"
+
+SOLID_THRESHOLD = 0.70
+PASS_RATE_THRESHOLD = 0.60
+MAX_IMPROVE_ITERATIONS = 3
+
+
+def _run_learner(skill_dir: Path, mock: bool = False) -> float:
+    """Run learner for structural scoring. Returns weighted score 0.0-1.0."""
+    if not LEARNER_SCRIPT.exists():
+        print("  Learner: skipped (not installed)")
+        return 0.0
     import subprocess
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(evaluator_script),
-            "--skill-path",
-            skill_id,
-            "--task-suite",
-            str(output_dir / "task_suite.yaml"),
-            "--standalone",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
+    cmd = [sys.executable, str(LEARNER_SCRIPT),
+           "--skill-path", str(skill_dir), "--max-iterations", "0",
+           "--state-root", str(skill_dir / ".forge-state")]
+    if mock:
+        cmd.append("--mock")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
-        print(result.stderr, file=sys.stderr)
-    return result.returncode
+        print(f"  Learner: error ({result.stderr.strip()[:100]})")
+        return 0.0
+    try:
+        import json as _json
+        data = _json.loads(result.stdout)
+        scores = data.get("final_scores", data.get("dimensions", {}))
+        if scores:
+            vals = [v.get("score", v) if isinstance(v, dict) else float(v) for v in scores.values()]
+            weighted = sum(vals) / len(vals) if vals else 0.0
+            print(f"  Learner: {weighted:.3f}")
+            return weighted
+    except Exception:
+        pass
+    print("  Learner: could not parse score")
+    return 0.0
 
 
-def run_auto_improve(output_dir: Path, skill_id: str) -> int:
-    """Run improvement-orchestrator if score is below SOLID."""
-    orchestrator_script = (
-        Path.home()
-        / ".claude/skills/improvement-orchestrator/scripts/orchestrate.py"
-    )
-    if not orchestrator_script.exists():
-        print(
-            "Warning: improvement-orchestrator not found. "
-            "Skipping auto-improve.",
-            file=sys.stderr,
-        )
-        return 0
-
+def _run_evaluator(skill_dir: Path, mock: bool = False) -> float | None:
+    """Run evaluator on task_suite. Returns pass_rate or None if no suite."""
+    task_suite = skill_dir / "task_suite.yaml"
+    if not task_suite.exists():
+        return None
+    if not EVALUATOR_SCRIPT.exists():
+        print("  Evaluator: skipped (not installed)")
+        return None
     import subprocess
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(orchestrator_script),
-            "--skill",
-            skill_id,
-            "--target-grade",
-            "SOLID",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    print(result.stdout)
+    state_root = skill_dir / ".forge-state"
+    cmd = [sys.executable, str(EVALUATOR_SCRIPT),
+           "--task-suite", str(task_suite),
+           "--standalone",
+           "--state-root", str(state_root),
+           "--skill-path", str(skill_dir)]
+    if mock:
+        cmd.append("--mock")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        print(result.stderr, file=sys.stderr)
-    return result.returncode
+        print(f"  Evaluator: error ({result.stderr.strip()[:100]})")
+        return None
+    try:
+        import json as _json
+        output_path = Path(result.stdout.strip().split("\n")[-1])
+        if output_path.exists():
+            data = _json.loads(output_path.read_text())
+            pr = data.get("evaluation", {}).get("pass_rate", data.get("pass_rate"))
+            if pr is not None:
+                print(f"  Evaluator: pass_rate={pr:.2f}")
+                return float(pr)
+    except Exception:
+        pass
+    print("  Evaluator: could not parse pass_rate")
+    return None
+
+
+def _run_orchestrator(skill_dir: Path, task_suite: Path | None, mock: bool = False) -> bool:
+    """Run one orchestrator cycle. Returns True on success."""
+    if not ORCHESTRATOR_SCRIPT.exists():
+        print("  Orchestrator: skipped (not installed)")
+        return False
+    import subprocess
+    state_root = skill_dir / ".forge-state" / "orchestrator"
+    cmd = [sys.executable, str(ORCHESTRATOR_SCRIPT),
+           "--target", str(skill_dir),
+           "--state-root", str(state_root),
+           "--auto"]
+    if task_suite and task_suite.exists():
+        cmd.extend(["--task-suite", str(task_suite)])
+    if mock:
+        cmd.append("--eval-mock")
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    if result.returncode != 0:
+        print(f"  Orchestrator: failed ({result.stderr.strip()[:100]})")
+        return False
+    # Check decision from stdout
+    for line in result.stdout.split("\n"):
+        if "Final Decision:" in line:
+            decision = line.split(":", 1)[1].strip()
+            print(f"  Orchestrator: {decision}")
+            return decision in ("keep", "pending_promote")
+    return True
+
+
+def _classify_tier(score: float) -> str:
+    if score >= 0.85:
+        return "POWERFUL"
+    elif score >= 0.70:
+        return "SOLID"
+    elif score >= 0.55:
+        return "GENERIC"
+    return "WEAK"
+
+
+def run_phase3(
+    skill_dir: Path,
+    do_evaluate: bool,
+    do_auto_improve: bool,
+    mock: bool = False,
+) -> int:
+    """Phase 3: Evaluate and optionally auto-improve."""
+    print("\n--- Phase 3: Evaluation ---")
+
+    learner_score = _run_learner(skill_dir, mock)
+    pass_rate = _run_evaluator(skill_dir, mock) if do_evaluate else None
+    tier = _classify_tier(learner_score)
+
+    needs_improve = (
+        learner_score < SOLID_THRESHOLD
+        or (pass_rate is not None and pass_rate < PASS_RATE_THRESHOLD)
+    )
+
+    if needs_improve and do_auto_improve:
+        print(f"\n--- Phase 3b: Auto-Improve (below SOLID: {learner_score:.3f}/{tier}) ---")
+        task_suite = skill_dir / "task_suite.yaml"
+        for iteration in range(1, MAX_IMPROVE_ITERATIONS + 1):
+            print(f"  Iteration {iteration}/{MAX_IMPROVE_ITERATIONS}")
+            success = _run_orchestrator(
+                skill_dir,
+                task_suite if task_suite.exists() else None,
+                mock,
+            )
+            if not success:
+                print("  Orchestrator did not succeed, stopping.")
+                break
+            # Re-evaluate
+            learner_score = _run_learner(skill_dir, mock)
+            tier = _classify_tier(learner_score)
+            if learner_score >= SOLID_THRESHOLD:
+                print(f"  Reached SOLID: {learner_score:.3f}")
+                break
+
+    print(f"\n--- Phase 3 Result ---")
+    print(f"  Learner: {learner_score:.3f} ({tier})")
+    if pass_rate is not None:
+        print(f"  Pass rate: {pass_rate:.0%}")
+    return 0
 
 
 if __name__ == "__main__":
