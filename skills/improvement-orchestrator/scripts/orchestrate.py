@@ -522,13 +522,60 @@ def print_summary(summary: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _auto_discover_feedback(target: str) -> list[str]:
+    """Auto-discover feedback sources for a target skill."""
+    discovered = []
+    # 1. Session feedback store (global)
+    feedback_store = Path.home() / ".claude/skills/session-feedback-analyzer/feedback-store/feedback.jsonl"
+    if feedback_store.exists():
+        discovered.append(str(feedback_store))
+    # 2. Per-skill .improvement-memory
+    memory_dir = Path(target) / ".improvement-memory"
+    if memory_dir.exists():
+        for f in sorted(memory_dir.glob("*.json")):
+            discovered.append(str(f))
+    # 3. Per-skill .feedback or learnings
+    for subdir in (".feedback", "learnings", "memory"):
+        d = Path(target) / subdir
+        if d.exists():
+            discovered.append(str(d))
+    return discovered
+
+
+def _auto_discover_task_suite(target: str) -> str | None:
+    """Auto-discover task_suite.yaml for a target skill."""
+    target_path = Path(target)
+    # 1. In-skill task_suite.yaml
+    ts = target_path / "task_suite.yaml"
+    if ts.exists():
+        return str(ts)
+    # 2. Centralized task_suites directory
+    skill_name = target_path.name
+    central = Path.home() / f".claude/skills/improvement-evaluator/task_suites/{skill_name}/task_suite.yaml"
+    if central.exists():
+        return str(central)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     target = str(Path(args.target).expanduser().resolve())
     state_root = str(Path(args.state_root).expanduser().resolve())
     sources = [str(Path(s).expanduser().resolve()) for s in args.source if s]
 
+    # Auto-discover feedback sources if none explicitly provided
+    if not sources:
+        sources = _auto_discover_feedback(target)
+        if sources:
+            print(f"  Auto-discovered {len(sources)} feedback source(s)")
+
     task_suite = str(Path(args.task_suite).expanduser().resolve()) if args.task_suite else None
+
+    # Auto-discover task_suite if not explicitly provided
+    if not task_suite:
+        task_suite = _auto_discover_task_suite(target)
+        if task_suite:
+            print(f"  Auto-discovered task suite: {task_suite}")
 
     try:
         summary = run_pipeline(
