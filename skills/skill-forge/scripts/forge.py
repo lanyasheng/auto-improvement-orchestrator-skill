@@ -194,13 +194,21 @@ def _run_learner(skill_dir: Path, mock: bool = False) -> float:
         return 0.0
     try:
         import json as _json
-        data = _json.loads(result.stdout)
-        scores = data.get("final_scores", data.get("dimensions", {}))
-        if scores:
-            vals = [v.get("score", v) if isinstance(v, dict) else float(v) for v in scores.values()]
-            weighted = sum(vals) / len(vals) if vals else 0.0
-            print(f"  Learner: {weighted:.3f}")
-            return weighted
+        # Learner may print status messages before JSON; parse last valid JSON line
+        for line in reversed(result.stdout.strip().splitlines()):
+            line = line.strip()
+            if not line or not line.startswith("{"):
+                continue
+            try:
+                data = _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+            scores = data.get("final_scores", data.get("dimensions", {}))
+            if scores:
+                vals = [v.get("score", v) if isinstance(v, dict) else float(v) for v in scores.values()]
+                weighted = sum(vals) / len(vals) if vals else 0.0
+                print(f"  Learner: {weighted:.3f}")
+                return weighted
     except Exception:
         pass
     print("  Learner: could not parse score")
