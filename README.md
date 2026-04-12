@@ -143,20 +143,34 @@ User corrects skill in conversation
 ```
 
 **Key changes:**
-- **Auto-discovery**: orchestrator finds `feedback.jsonl` and `task_suite.yaml` without CLI args
+- **Auto-discovery**: orchestrator finds `feedback.jsonl`, `muse-feedback.jsonl`, and `task_suite.yaml` without CLI args
+- **Dual-channel feedback**: Claude Code sessions (via `analyze.py`) + OpenClaw DingTalk conversations (via `muse-feedback-analyzer.py`) — both collected at SessionEnd
 - **30-day staleness filter**: only recent feedback flows into improvement candidates
 - **Session-to-eval bridge**: converts real user interactions into evaluator task suites
 - **Forge Phase 3/4**: evaluate + auto-improve + install after skill generation
+- **Evaluator threshold fix**: `eval_threshold` lowered from 6.0 to 1.0 — candidate execution verification was silently disabled because discriminator scores are typically 1.5-4.0
 - **Pareto fix**: unmeasured dimensions no longer cause false regression blocks
+- **State cleanup**: `cleanup-state.py` removes artifacts older than 30 days
+- **Weekly cron**: system crontab runs the full pipeline on all skills with task suites every Sunday 03:17
 
-### Claude Code Integration
+### Claude Code + OpenClaw Integration
 
-When used with Claude Code, a SessionEnd hook triggers feedback collection automatically. A SessionStart hook notifies the user when corrections are available for skill improvement:
+SessionEnd hook triggers feedback collection from **both** channels automatically:
+
+```
+Session ends → session-end-global.sh (async, with mkdir lock)
+  ├── analyze.py → feedback.jsonl      (Claude Code sessions)
+  └── muse-feedback-analyzer.py → muse-feedback.jsonl  (OpenClaw DingTalk)
+```
+
+SessionStart hook notifies when corrections are available:
 
 ```
 SKILL IMPROVEMENT AVAILABLE: 2 new correction(s) detected for: deslop
 To trigger: python3 orchestrate.py --target ~/.claude/skills/deslop --state-root /tmp/improve --auto
 ```
+
+Weekly cron (`skill-improvement-cron.sh`) runs the full pipeline on all skills with task suites, then cleans up old state artifacts.
 
 ---
 
@@ -379,7 +393,7 @@ The R²=0.00 finding is what drove the shift from regex structural checks to LLM
 
 **Why Pareto front instead of single score?** — A single scalar hides dimension regressions. Candidate that "improves" coverage by destroying accuracy gets the same weighted score. The Pareto front enforces: each dimension must independently not regress beyond its tolerance (security 2%, efficiency 10%, others 5%).
 
-**Why conditional evaluation?** — The evaluator calls `claude -p` per task (~$3/eval). The discriminator score acts as a cheap pre-filter; only candidates above threshold (default: 6.0) proceed. Saves 60%+ of evaluation cost.
+**Why conditional evaluation?** — The evaluator calls `claude -p` per task (~$3/eval). The discriminator score acts as a cheap pre-filter; only candidates above threshold (default: 1.0) proceed. Saves 60%+ of evaluation cost.
 
 **Why three-layer memory?** — HOT (≤100, always loaded) / WARM (overflow, on-demand) / COLD (archived). Failed strategies are deprioritized in subsequent rounds via the Ralph Wiggum trace mechanism.
 
@@ -420,9 +434,7 @@ lib/
 
 **Cold memory not implemented** — The three-layer memory's COLD tier (>3 months archive) is designed but not built.
 
-**No concurrent state locking** — `state_machine.py` uses non-atomic JSON read-modify-write. Running multiple pipeline instances against the same `state_root` can cause TOCTOU races. The session-end hook uses `flock` to prevent concurrent analyzer runs.
-
-**Orchestrator trigger is manual** — The feedback collection is automatic (SessionEnd hook), but running the orchestrator to apply improvements requires manual invocation. Automated scheduling (cron/watcher) is designed but not yet deployed to allow observation of improvement quality first.
+**No concurrent state locking** — `state_machine.py` uses non-atomic JSON read-modify-write. Running multiple pipeline instances against the same `state_root` can cause TOCTOU races. The session-end hook uses `mkdir`-based locking (macOS compatible, no `flock` dependency) to prevent concurrent analyzer runs.
 
 **Regex accuracy fallback is useless** — When `claude` CLI is unavailable, the accuracy dimension falls back to regex checks with self-measured R²=0.00 correlation to actual quality. The LLM judge path (`claude -p`) is strongly recommended.
 
