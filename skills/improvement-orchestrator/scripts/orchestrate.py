@@ -554,6 +554,11 @@ def _auto_discover_feedback(target: str) -> list[str]:
     filtered = _filter_recent_feedback(feedback_store)
     if filtered:
         discovered.append(str(filtered))
+    # 1b. OpenClaw (muse) feedback store
+    muse_feedback = Path.home() / ".claude/skills/session-feedback-analyzer/feedback-store/muse-feedback.jsonl"
+    muse_filtered = _filter_recent_feedback(muse_feedback)
+    if muse_filtered:
+        discovered.append(str(muse_filtered))
     # 2. Per-skill .improvement-memory
     memory_dir = Path(target) / ".improvement-memory"
     if memory_dir.exists():
