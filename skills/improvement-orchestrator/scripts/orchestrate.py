@@ -522,13 +522,38 @@ def print_summary(summary: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _filter_recent_feedback(feedback_path: Path, max_age_days: int = 30) -> Path | None:
+    """Filter feedback.jsonl to only events from the last N days. Returns path to filtered file."""
+    if not feedback_path.exists():
+        return None
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    filtered_path = feedback_path.parent / "feedback-recent.jsonl"
+    count = 0
+    with feedback_path.open("r") as src, filtered_path.open("w") as dst:
+        for line in src:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                ts = entry.get("timestamp", "")
+                if ts >= cutoff or not ts:  # keep if recent or no timestamp
+                    dst.write(line + "\n")
+                    count += 1
+            except json.JSONDecodeError:
+                continue
+    return filtered_path if count > 0 else None
+
+
 def _auto_discover_feedback(target: str) -> list[str]:
     """Auto-discover feedback sources for a target skill."""
     discovered = []
-    # 1. Session feedback store (global)
+    # 1. Session feedback store (global, filtered to last 30 days)
     feedback_store = Path.home() / ".claude/skills/session-feedback-analyzer/feedback-store/feedback.jsonl"
-    if feedback_store.exists():
-        discovered.append(str(feedback_store))
+    filtered = _filter_recent_feedback(feedback_store)
+    if filtered:
+        discovered.append(str(filtered))
     # 2. Per-skill .improvement-memory
     memory_dir = Path(target) / ".improvement-memory"
     if memory_dir.exists():
