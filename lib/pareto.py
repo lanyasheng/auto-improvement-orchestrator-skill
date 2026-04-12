@@ -1,13 +1,8 @@
 """Pareto front tracking for multi-dimensional skill improvement."""
 
 from __future__ import annotations
-import sys
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+from dataclasses import dataclass, asdict
 
 from lib.common import read_json, write_json, utc_now_iso
 
@@ -98,8 +93,10 @@ class ParetoFront:
 
         regressions = []
         for dim, best in best_per_dim.items():
+            if dim not in scores:
+                continue  # dimension not measured in new candidate, skip
             tol = tols.get(dim, self.DEFAULT_TOLERANCE)
-            new_score = scores.get(dim, 0)
+            new_score = scores[dim]
             if new_score < best * (1 - tol):
                 regressions.append({"dimension": dim, "best": best, "new": new_score,
                                     "delta": new_score - best, "tolerance": tol})
