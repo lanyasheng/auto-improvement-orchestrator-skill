@@ -21,16 +21,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 # Reuse analyze.py's detection logic
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+try:
+    import yaml
+except ImportError:
+    print("Error: PyYAML required. Install with: pip install pyyaml", file=sys.stderr)
+    sys.exit(1)
+
 from analyze import (
     FeedbackEvent,
     analyze_sessions,
+    classify_outcome,
     iter_session_files,
     parse_session,
     detect_skill_invocations,
@@ -224,8 +229,6 @@ def extract_eval_tasks(
         for i, invocation in enumerate(invocations):
             next_idx = invocations[i + 1].message_index if i + 1 < len(invocations) else None
 
-            # Import classify_outcome here to avoid circular issues
-            from analyze import classify_outcome
             event = classify_outcome(messages, invocation, next_idx)
             if not event:
                 continue
