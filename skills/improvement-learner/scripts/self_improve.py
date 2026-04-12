@@ -434,6 +434,36 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
             cov_checks.append(has_references)
         else:
             cov_checks.append(True)  # not applicable, pass
+
+        # 7. Workflow/Usage section has substance (≥8 non-empty lines, not just a heading)
+        #    If no Workflow/Usage section exists, skip this check (not all skills need one).
+        wf_match = re.search(
+            r'## (?:Workflow|Usage|工作流|用法).*?\n(.*?)(?=\n## |\Z)',
+            content, re.DOTALL)
+        if wf_match:
+            wf_lines = [l for l in wf_match.group(1).strip().split("\n") if l.strip()]
+            cov_checks.append(len(wf_lines) >= 8)
+
+        # 8. If references/ exists, SKILL.md must link to them (not just have the dir)
+        if has_references:
+            ref_files = list(skill_path.rglob("references/**/*.md"))
+            ref_links = len(re.findall(r'\[.*?\]\(references/.*?\.md\)', content))
+            # Should reference at least half the files, minimum 2
+            min_links = max(2, len(ref_files) // 2)
+            cov_checks.append(ref_links >= min_links)
+        else:
+            cov_checks.append(True)  # no references dir, not applicable
+
+        # 9. Example has substance (≥4 non-empty lines inside <example> tags)
+        ex_match = re.search(r'<example>(.*?)</example>', content, re.DOTALL)
+        if ex_match:
+            ex_lines = [l for l in ex_match.group(1).strip().split("\n") if l.strip()]
+            cov_checks.append(len(ex_lines) >= 4)
+        elif "<example" in content or "## Example" in content:
+            cov_checks.append(True)  # has example section, trust it
+        else:
+            cov_checks.append(False)
+
         scores["coverage"] = sum(cov_checks) / len(cov_checks)
 
     # Completeness: project artifact completeness, category-aware.
@@ -535,7 +565,8 @@ def evaluate_skill_dimensions(skill_path: Path) -> dict[str, float]:
         # SKILL.md should not contain actual secrets
         sec_checks.append("api_key =" not in skill_lower and "api_key=" not in skill_lower)
         sec_checks.append("password =" not in skill_lower and "password=" not in skill_lower)
-        sec_checks.append("sk-" not in skill_content)  # API key pattern
+        # API key pattern: sk- followed by alphanumeric (not sk- inside words like "task-")
+        sec_checks.append(not bool(re.search(r'(?<![a-zA-Z])sk-[a-zA-Z0-9]{10,}', skill_content)))
         # Has license in frontmatter?
         if skill_content.count("---") >= 2:
             fm = skill_content.split("---", 2)[1]
