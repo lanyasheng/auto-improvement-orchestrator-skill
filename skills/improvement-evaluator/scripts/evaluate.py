@@ -77,7 +77,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pass-k", type=int, default=1, help="Number of attempts per task (pass@k)")
     parser.add_argument("--baseline-cache-dir", help="Directory for baseline result caching")
     parser.add_argument("--output", help="Output path for evaluation artifact JSON")
-    parser.add_argument("--eval-threshold", type=float, default=6.0, help="Minimum discriminator score to evaluate")
+    parser.add_argument("--eval-threshold", type=float, default=1.0, help="Minimum discriminator score to evaluate (default: 1.0, accepts most candidates)")
     parser.add_argument("--mock", action="store_true", help="Use mock execution (no claude CLI needed)")
     parser.add_argument("--skill-path", help="Path to SKILL.md or skill directory (standalone mode: prepend to prompts)")
     return parser.parse_args(argv)
