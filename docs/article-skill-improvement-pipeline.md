@@ -638,7 +638,7 @@ autoloop-controller 包了个外层循环，检测五种停止信号：
 
 第二个：Pareto front 是 ROI 最高的组件。98 行 Python，拦住了至少三个 skill 不被"优化"搞坏。加权得分的陷阱防不胜防——accuracy 涨了但 trigger_quality 崩了，总分居然还涨 0.02。
 
-第三个：成本控制是设计约束，不是事后补丁。evaluator 一次 $3-5，100 个 skill 的团队一个月可能烧 $5000。conditional evaluation（低分候选跳过 evaluator）省了 60%，但这是后来才加的。早知道应该一开始就设计进去。
+第三个：成本控制是设计约束，不是事后补丁。evaluator 一次 $3-5，100 个 skill 的团队一个月可能烧 $5000。conditional evaluation（低分候选跳过 evaluator）省了 60%，但这是后来才加的。baseline 太弱时现在也不再硬退出，而是记一条 `baseline_health` warning，让链路继续跑但提醒你复查 task suite。早知道应该一开始就设计进去。
 
 ## 反馈闭环断了——从 GEPA 偷来的修法
 

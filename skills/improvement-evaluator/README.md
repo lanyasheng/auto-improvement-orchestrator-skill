@@ -4,6 +4,10 @@ Execution-based evaluation for Skill improvement candidates. Runs predefined
 task suites against a SKILL.md (candidate vs. baseline), judges each task output,
 and produces an `execution_pass_rate` metric that downstream gates consume.
 
+If the baseline itself is unusually weak, the evaluator records an advisory
+warning instead of aborting the whole run. That keeps the pipeline moving while
+still surfacing that the suite or baseline likely needs review.
+
 ## Directory Structure
 
 - `scripts/evaluate.py` -- Main CLI entry point (pipeline and standalone modes)

@@ -147,8 +147,8 @@ $ python3 scripts/evaluate.py \
 Running the evaluator without a task suite file:
 → Preflight fails with "Task suite not found" -- the evaluator requires a valid task_suite.yaml.
 
-Running with a broken task suite (baseline pass rate < 20%):
-→ Aborts with verdict="error" and reason="baseline pass rate X < 0.2". Fix the suite first.
+Running with a suspiciously weak baseline (baseline pass rate < 20%):
+→ Continues with a warning in `evaluation.baseline_health` and `warnings[]`. Review the suite, but the pipeline does not hard-stop.
 </anti-example>
 
 ## CLI Reference
@@ -205,11 +205,13 @@ and improvement-orchestrator.
 | `verdict` | string | `pass`, `fail`, `skipped`, or `error` |
 | `candidate_results` | array | Per-task breakdown with task_id, passed, score, duration_ms |
 | `baseline_results` | array | Same structure for baseline run |
+| `baseline_health` | object | Advisory baseline status (`healthy` or `warning`) |
+| `warnings` | array | Non-blocking warnings, including weak-baseline notes |
 | `truth_anchor` | string | Absolute path to this artifact for audit trail |
 
 Verdict logic: `pass` when delta >= 0 (candidate is at least as good as baseline).
 `skipped` when candidate discriminator score is below `--eval-threshold`.
-`error` when baseline pass rate < 20% (broken task suite).
+Weak baselines no longer force `error`; they are recorded as warnings so execution evidence can still flow through the pipeline.
 
 ## Related Skills
 
