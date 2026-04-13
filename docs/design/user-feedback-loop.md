@@ -235,6 +235,20 @@ distill already watches `~/.claude/projects/**/*.jsonl` and extracts patterns. T
 
 **Option B: Independent processing.** session-analyzer runs as a separate cron job, parses JSONL independently of distill. Simpler to implement but duplicates the JSONL parsing work that distill already does.
 
+### Operational Wiring
+
+The design above becomes practical only when the analyzer is wired into the runtime:
+
+1. `SessionEnd` hook appends fresh events into `feedback-store/feedback.jsonl`
+2. a startup reminder checks whether new correction events exist and surfaces pending skills
+3. `export_feedback_bridge.py` converts the current feedback store into markdown so QMD/study-brain can ingest the same signal without reading JSONL directly
+4. scheduled orchestrator runs consume both the structured `feedback.jsonl` signal and the markdown hotspot artifact
+
+This split matters because the auto-improvement pipeline and the memory/knowledge pipeline want different shapes of the same data:
+
+- `feedback.jsonl` is optimized for machines and metrics
+- markdown hotspot lessons are optimized for long-term memory, distillation, and QMD recall
+
 ### Privacy and Scope
 
 - **Local only**: All data stays in `~/.claude/` and the project's `feedback-store/` directory. No external telemetry, no network calls.
@@ -252,4 +266,3 @@ distill already watches `~/.claude/projects/**/*.jsonl` and extracts patterns. T
 **Why a 3-turn influence window?** Empirically observed in our session logs: corrections almost always come within 1-2 user turns. By turn 3, the user has typically moved on to a new topic. A wider window would increase false positives (attributing unrelated complaints to the skill).
 
 **Why 0.5 weight for partial corrections?** A partial correction means the skill got the direction right but missed details. This is less severe than a full rejection but still indicates room for improvement. The 0.5 weight prevents partial corrections from dominating the metric while still counting them.
-

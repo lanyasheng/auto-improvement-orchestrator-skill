@@ -112,6 +112,8 @@ class TestDetectSkillInvocations:
             _slash_command("uuid-3", "help"),
             _slash_command("uuid-4", "clear"),
             _slash_command("uuid-5", "resume"),
+            _slash_command("uuid-6", "read"),
+            _slash_command("uuid-7", "exit"),
         ]
         result = analyze.detect_skill_invocations(messages)
         assert len(result) == 0
@@ -120,12 +122,10 @@ class TestDetectSkillInvocations:
         messages = [
             _skill_tool_use("uuid-1", "cpp-expert"),
             _user_msg("uuid-u1", "ok"),
-            _slash_command("uuid-2", "deslop"),
         ]
         result = analyze.detect_skill_invocations(messages)
-        assert len(result) == 2
+        assert len(result) == 1
         assert result[0].skill_id == "cpp-expert"
-        assert result[1].skill_id == "deslop"
 
     def test_ignores_non_skill_tool_use(self):
         messages = [{
@@ -143,6 +143,34 @@ class TestDetectSkillInvocations:
         }]
         result = analyze.detect_skill_invocations(messages)
         assert len(result) == 0
+
+    def test_detects_real_global_skill_slash_command(self):
+        messages = [
+            _slash_command("uuid-2", "session-feedback-analyzer"),
+        ]
+        result = analyze.detect_skill_invocations(messages)
+        assert len(result) == 1
+        assert result[0].skill_id == "session-feedback-analyzer"
+
+
+class TestSessionFiltering:
+    def test_skips_observer_sessions_by_path(self, tmp_path: Path):
+        session_path = tmp_path / "observer-sessions" / "abc.jsonl"
+        session_path.parent.mkdir(parents=True)
+        session_path.write_text("", encoding="utf-8")
+        messages = [_user_msg("u-1", "Hello memory agent")]
+        assert analyze.should_skip_session(session_path, messages) is True
+
+    def test_skips_observer_sessions_by_cwd(self, tmp_path: Path):
+        session_path = tmp_path / "normal" / "abc.jsonl"
+        session_path.parent.mkdir(parents=True)
+        session_path.write_text("", encoding="utf-8")
+        messages = [{
+            "type": "user",
+            "cwd": "/Users/sly/.claude-mem/observer-sessions",
+            "message": {"role": "user", "content": "Hello memory agent"},
+        }]
+        assert analyze.should_skip_session(session_path, messages) is True
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +362,27 @@ class TestWriteFeedbackJsonl:
         analyze.write_feedback_jsonl([event], out, no_snippets=True)
         parsed = json.loads(out.read_text().strip())
         assert parsed["user_message_snippet"] == ""
+
+    def test_overwrite_rebuilds_clean_file(self, tmp_path):
+        old_event = analyze.FeedbackEvent(
+            event_id="old123", timestamp="", session_id="", skill_id="old-skill",
+            invocation_uuid="", outcome="correction", confidence=0.9,
+            correction_type=None, user_message_snippet="", turns_to_feedback=1,
+            ai_tools_used=[], dimension_hint=None,
+        )
+        new_event = analyze.FeedbackEvent(
+            event_id="new456", timestamp="", session_id="", skill_id="new-skill",
+            invocation_uuid="", outcome="acceptance", confidence=0.8,
+            correction_type=None, user_message_snippet="", turns_to_feedback=1,
+            ai_tools_used=[], dimension_hint=None,
+        )
+        out = tmp_path / "feedback.jsonl"
+        analyze.write_feedback_jsonl([old_event], out)
+        analyze.write_feedback_jsonl([new_event], out, overwrite=True)
+        lines = out.read_text().strip().split("\n")
+        assert len(lines) == 1
+        parsed = json.loads(lines[0])
+        assert parsed["event_id"] == "new456"
 
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,17 @@ python3 skills/improvement-evaluator/scripts/evaluate.py \
 python3 skills/session-feedback-analyzer/scripts/analyze.py \
   --session-dir ~/.claude/projects/ \
   --output feedback-store/feedback.jsonl
+
+# Rebuild a cleaned store after analyzer upgrades
+python3 skills/session-feedback-analyzer/scripts/analyze.py \
+  --session-dir ~/.claude/projects/ \
+  --output feedback-store/feedback.jsonl \
+  --overwrite
+
+# Export runtime hotspots into markdown for QMD / study-brain
+python3 skills/session-feedback-analyzer/scripts/export_feedback_bridge.py \
+  --input feedback-store/feedback.jsonl \
+  --output feedback-store/$(date +%F)-session-feedback-hotspots.md
 ```
 
 ### Convert session feedback to evaluation tasks (new)
@@ -237,6 +248,7 @@ This project solves three problems:
      | session-feedback-      |  Parse ~/.claude/projects/*.jsonl
      | analyzer               |  Detect corrections/acceptances
      |  -> feedback.jsonl     |  Feed back into generator
+     |  -> markdown hotspots  |  Feed into QMD / study-brain
      +------------------------+
 ```
 

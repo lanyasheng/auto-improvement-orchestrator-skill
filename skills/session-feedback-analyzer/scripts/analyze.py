@@ -45,6 +45,12 @@ DIMENSION_KEYWORDS = {
 }
 
 INFLUENCE_WINDOW = 3  # max user turns to scan after skill invocation
+BUILTIN_COMMANDS = {
+    "add-dir", "agents", "bug", "clear", "compact", "config", "cost", "doctor",
+    "exit", "help", "ide", "init", "install-github-app", "login", "logout", "mcp",
+    "memory", "migrate-installer", "model", "permissions", "pr_comments", "read",
+    "release-notes", "resume", "review", "status", "terminal-setup",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +116,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=5,
         help="Minimum invocations before computing metrics",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Rebuild the output file from scratch instead of appending",
+    )
     return parser.parse_args(argv)
 
 
@@ -149,6 +160,57 @@ def extract_project(path: Path) -> str:
     return path.parent.name
 
 
+def _session_workdir(messages: list[dict[str, Any]]) -> str:
+    """Return the first cwd attached to the session, if any."""
+    for entry in messages:
+        cwd = entry.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            return cwd
+    return ""
+
+
+def should_skip_session(path: Path, messages: list[dict[str, Any]]) -> bool:
+    """Skip synthetic/observer sessions that don't reflect real user-skill feedback."""
+    path_str = str(path)
+    if "observer-sessions" in path_str:
+        return True
+
+    cwd = _session_workdir(messages)
+    if "observer-sessions" in cwd:
+        return True
+
+    return False
+
+
+def _skill_exists(skill_id: str, messages: list[dict[str, Any]]) -> bool:
+    """Return True when the slash command likely maps to a real installed skill."""
+    if not skill_id or skill_id in BUILTIN_COMMANDS:
+        return False
+
+    cwd = _session_workdir(messages)
+    candidates = [
+        Path.home() / ".claude" / "skills" / skill_id,
+        Path.home() / ".claude" / "plugins" / "marketplaces",
+    ]
+    if cwd:
+        candidates.append(Path(cwd) / ".claude" / "skills" / skill_id)
+
+    direct_skill_dirs = candidates[:2]
+    if any((candidate / "SKILL.md").exists() for candidate in direct_skill_dirs if candidate.name == skill_id):
+        return True
+    project_skill_dir = candidates[2] if len(candidates) > 2 else None
+    if project_skill_dir and (project_skill_dir / "SKILL.md").exists():
+        return True
+
+    plugin_root = Path.home() / ".claude" / "plugins" / "marketplaces"
+    if plugin_root.exists():
+        for skill_file in plugin_root.glob(f"*/**/skills/{skill_id}/SKILL.md"):
+            if skill_file.is_file():
+                return True
+
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Skill invocation detection
 # ---------------------------------------------------------------------------
@@ -186,8 +248,7 @@ def detect_skill_invocations(messages: list[dict[str, Any]]) -> list[SkillInvoca
             match = re.search(r"<command-name>/?([\w-]+)</command-name>", content_str)
             if match:
                 skill_id = match.group(1)
-                # Skip built-in commands
-                if skill_id not in ("help", "clear", "resume", "compact", "config"):
+                if _skill_exists(skill_id, messages):
                     invocations.append(SkillInvocation(
                         invocation_id=uuid,
                         skill_id=skill_id,
@@ -403,13 +464,14 @@ def write_feedback_jsonl(
     events: list[FeedbackEvent],
     output_path: Path,
     no_snippets: bool = False,
+    overwrite: bool = False,
 ) -> Path:
-    """Append feedback events to a JSONL file."""
+    """Write feedback events to a JSONL file."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Read existing event IDs to avoid duplicates
     existing_ids: set[str] = set()
-    if output_path.exists():
+    if output_path.exists() and not overwrite:
         with output_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
@@ -419,8 +481,9 @@ def write_feedback_jsonl(
                     except json.JSONDecodeError:
                         continue
 
+    mode = "w" if overwrite else "a"
     new_count = 0
-    with output_path.open("a", encoding="utf-8") as f:
+    with output_path.open(mode, encoding="utf-8") as f:
         for event in events:
             if event.event_id in existing_ids:
                 continue
@@ -489,10 +552,11 @@ def analyze_sessions(
 
     for session_path in iter_session_files(session_dir):
         session_id = extract_session_id(session_path)
-        project = extract_project(session_path)
         messages = parse_session(session_path)
 
         if not messages:
+            continue
+        if should_skip_session(session_path, messages):
             continue
 
         invocations = detect_skill_invocations(messages)
@@ -532,7 +596,12 @@ def main(argv: list[str] | None = None) -> int:
     events = analyze_sessions(session_dir, skill_filter=args.skill_filter)
 
     output_path = Path(args.output)
-    write_feedback_jsonl(events, output_path, no_snippets=args.no_snippets)
+    write_feedback_jsonl(
+        events,
+        output_path,
+        no_snippets=args.no_snippets,
+        overwrite=args.overwrite,
+    )
 
     # Archive old events
     archive_dir = output_path.parent / "archive"

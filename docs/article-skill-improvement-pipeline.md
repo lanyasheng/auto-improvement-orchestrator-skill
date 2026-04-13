@@ -1,5 +1,6 @@
-> 11 个管线 skill + 2 个辅助工具，20000 行 Python，397 个测试。
+> 13 个管线 skill + 4 个辅助工具，20000+ 行 Python，397 个测试。
 > 各 skill 已独立发布到 ClawHub（如 `openclaw skills install improvement-learner`），完整仓库见 [GitHub](https://github.com/lanyasheng/auto-improvement-orchestrator-skill)。
+> **2026-04-13 更新**：`session-feedback` 链路补上了真实运行态清洗和 markdown bridge。`feedback.jsonl` 支持 `--overwrite` 重建，SessionEnd 采集后的热点会额外导出成 markdown，给 QMD / study-brain 走统一知识链。
 
 **TL;DR**
 
@@ -425,6 +426,8 @@ task suite 测的是作者预设的场景。用户在真实使用中遇到的问
 <span style="color:#999">→</span>
 <span style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:4px 8px">feedback.jsonl</span>
 <span style="color:#999">→</span>
+<span style="background:#fff7ed;border:1px solid #fdba74;border-radius:6px;padding:4px 8px">markdown hotspots</span>
+<span style="color:#999">→</span>
 <span style="background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:4px 8px">correction_rate<br/><span style="font-size:10px">per skill</span></span>
 </div>
 </div>
@@ -775,6 +778,16 @@ python3 skills/improvement-learner/scripts/self_improve.py \
 # 从 Claude Code 会话日志里提取反馈
 python3 skills/session-feedback-analyzer/scripts/analyze.py \
   --output feedback.jsonl
+
+# 清洗历史噪音并重建正式 feedback store
+python3 skills/session-feedback-analyzer/scripts/analyze.py \
+  --output feedback.jsonl \
+  --overwrite
+
+# 导出 markdown 热点给 QMD / study-brain
+python3 skills/session-feedback-analyzer/scripts/export_feedback_bridge.py \
+  --input feedback.jsonl \
+  --output 2026-04-13-session-feedback-hotspots.md
 ```
 
 除了 pyyaml 和 pytest 没有别的依赖。evaluator 跑真实任务需要 `claude -p`，
