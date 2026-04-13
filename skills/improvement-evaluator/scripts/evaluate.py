@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 BASELINE_CACHE_TTL_DAYS = 7
-BASELINE_ABORT_THRESHOLD = 0.2  # abort if baseline < 20%
+BASELINE_ABORT_THRESHOLD = 0.2  # advisory threshold for suspiciously weak baselines
 VALID_JUDGE_TYPES = {"contains", "pytest", "llm-rubric"}
 
 
@@ -298,6 +298,24 @@ def compute_results(
     }
 
 
+def assess_baseline_health(
+    baseline_rate: float,
+    threshold: float = BASELINE_ABORT_THRESHOLD,
+) -> dict[str, Any]:
+    """Classify whether a baseline is strong enough to trust without caveats."""
+    if baseline_rate < threshold:
+        return {
+            "status": "warning",
+            "threshold": threshold,
+            "reason": f"baseline pass rate {baseline_rate:.2f} < advisory threshold {threshold:.2f}",
+        }
+    return {
+        "status": "healthy",
+        "threshold": threshold,
+        "reason": "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -495,27 +513,20 @@ def main(argv: list[str] | None = None) -> int:
                     "created_at": utc_now_iso(),
                 })
 
-        # Abort if baseline is broken
-        if baseline_rate < BASELINE_ABORT_THRESHOLD:
-            logger.error(
-                "Baseline pass rate %.2f < %.2f threshold. Task suite may be broken.",
-                baseline_rate, BASELINE_ABORT_THRESHOLD,
-            )
-            output_path = _resolve_output(args.output, state_root, run_id)
-            artifact = _build_artifact(
-                run_id=run_id,
-                target=target,
-                candidate_id=args.candidate_id,
-                verdict="error",
-                reason=f"baseline pass rate {baseline_rate} < {BASELINE_ABORT_THRESHOLD}",
-                output_path=output_path,
-            )
-            write_json(output_path, artifact)
-            print(str(output_path))
-            return 1
-
     # --- Compute results ---
     evaluation = compute_results(candidate_rate, baseline_rate)
+    baseline_health = assess_baseline_health(baseline_rate)
+    warnings: list[str] = []
+    if baseline_health["status"] != "healthy":
+        warning = (
+            f"baseline pass rate {baseline_rate:.2f} < advisory threshold "
+            f"{BASELINE_ABORT_THRESHOLD:.2f}; interpret deltas cautiously"
+        )
+        logger.warning("%s", warning)
+        warnings.append(warning)
+    evaluation["baseline_health"] = baseline_health
+    if warnings:
+        evaluation["warnings"] = warnings
 
     # --- Build output artifact ---
     output_path = _resolve_output(args.output, state_root, run_id)
@@ -535,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         "evaluation": evaluation,
         "candidate_results": candidate_results,
         "baseline_results": baseline_results,
+        "warnings": warnings,
         "target": target,
         "next_step": "gate_decision",
         "next_owner": "gate",

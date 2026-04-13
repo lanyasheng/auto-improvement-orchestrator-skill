@@ -20,6 +20,7 @@ from evaluate import (
     compute_results,
     compute_pass_rate,
     extract_candidate_skill,
+    assess_baseline_health,
     _validate_suite_schema,
     BASELINE_ABORT_THRESHOLD,
 )
@@ -253,3 +254,13 @@ class TestBaselineShortCircuit:
         """Verify the baseline abort threshold is reasonable."""
         assert BASELINE_ABORT_THRESHOLD == 0.2
         assert 0 < BASELINE_ABORT_THRESHOLD < 1
+
+    def test_assess_baseline_health_warns_when_below_threshold(self):
+        health = assess_baseline_health(0.0)
+        assert health["status"] == "warning"
+        assert "advisory threshold" in health["reason"]
+
+    def test_assess_baseline_health_healthy_when_above_threshold(self):
+        health = assess_baseline_health(0.5)
+        assert health["status"] == "healthy"
+        assert health["reason"] == ""
